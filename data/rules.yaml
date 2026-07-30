@@ -1,0 +1,28 @@
+# User-authored categorization rules (tier 2 of the cascade, PLAN.md §5.4).
+#
+# First matching rule wins, in file order. Each rule:
+#
+#   name           - optional; used in rationale text and error messages.
+#                    Defaults to the pattern itself if omitted.
+#   pattern        - required regex, matched case-insensitively against the
+#                    raw transaction description AND the payee (if the bank
+#                    feed sent one) -- either matching is enough.
+#   account        - required; must be open in the ledger (accounts.beancount).
+#                    An account that doesn't exist is a hard error naming the
+#                    rule, not a silent skip.
+#   sign           - optional: "negative" restricts the rule to spending,
+#                    "positive" to income/refunds. Omit to match either.
+#   amount_min/max - optional bounds on the transaction's SIGNED amount (not
+#                    its absolute value) -- spending is negative, so
+#                    "at least $50 spent" is amount_max: -50, not
+#                    amount_min: 50.
+#   asset_account  - optional; restricts the rule to one bank/asset account
+#                    (e.g. "Assets:SimpleFIN:Checking").
+#
+# Confidence for a rule match is always 1.0: the user is stating a fact,
+# not offering a guess.
+
+- name: PG&E electric
+  pattern: "PG&E"
+  account: "Expenses:Utilities:Electric"
+  sign: negative
