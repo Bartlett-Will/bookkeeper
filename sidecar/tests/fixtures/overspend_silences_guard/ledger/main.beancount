@@ -1,0 +1,41 @@
+option "operating_currency" "USD"
+
+; The second, worse consequence in the PLAN.md §5.2 defect note: an overspent
+; envelope did not merely inflate `available`, it *silenced* the
+; over-allocation guard. This ledger is genuinely over-allocated and the old
+; formula reported it as fine.
+;
+;   cash            = 200 - 100 = 100
+;   Groceries       = 50 - 100  = -50   (overspent by 50)
+;   Dining Out      = 150 - 0   = 150   (untouched, fully committed)
+;   Sigma balances  = 100
+;   Sigma max(b, 0) = 150
+;   available       = 100 - 150 = -50   -> over-allocated, verify MUST fail
+;
+; Old formula: `cash - Sigma balances` = 100 - 100 = 0, which passes
+; `available >= 0` and reports verify: OK. But 150 is still committed to
+; Dining Out and only 100 remains in the bank, so that money does not exist.
+;
+; Note why the old form could never catch this: `cash - Sigma balances`
+; algebraically reduces to `inflows - Sigma allocations`, so spending
+; cancelled out of it entirely and it could only ever detect allocating more
+; than has ever come in.
+
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Assets:Checking            USD
+2026-01-01 open Expenses:Food:Groceries    USD
+2026-01-01 open Expenses:Food:Dining       USD
+
+2026-01-01 custom "envelope" "map" "Expenses:Food:Groceries" "Groceries"
+2026-01-01 custom "envelope" "map" "Expenses:Food:Dining"    "Dining Out"
+
+2026-01-01 custom "envelope" "allocate" "Groceries"   50.00 USD
+2026-01-01 custom "envelope" "allocate" "Dining Out" 150.00 USD
+
+2026-01-01 * "Opening balance"
+    Assets:Checking      200.00 USD
+    Equity:Opening-Balances
+
+2026-01-05 * "Groceries"
+    Assets:Checking      -100.00 USD
+    Expenses:Food:Groceries

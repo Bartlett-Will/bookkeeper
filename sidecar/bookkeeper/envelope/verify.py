@@ -6,12 +6,27 @@
    account vanishes from the budget view while the ledger stays valid.
    Also catches an account mapped to more than one envelope.
 2. Over-allocation check — `available(asof) >= 0`, i.e.
-   `Σ balance(E) <= budgeted cash`. Deliberately NOT `Σ allocations <=
-   budgeted cash`, which false-positives once any money has been spent
-   (see the regression test in tests/test_envelope_verify.py).
+   `Σ max(balance(E), 0) <= budgeted cash`. Deliberately NOT `Σ allocations
+   <= budgeted cash`, which false-positives once any money has been spent
+   (see the regression test in tests/test_envelope_verify.py). Equally
+   deliberately not `Σ balance(E) <= budgeted cash`: that form let an
+   overspent envelope's negative balance credit itself back and silence this
+   check outright (PLAN.md §5.2, fixed 2026-07-30).
 3. Balance assertions / bean-check — `beancount.loader.load_file` already
    runs the same plugin pipeline `bean-check` does, so its `errors` list
    *is* bean-check's output; we just surface it instead of shelling out.
+
+Overspent envelopes are reported as **notes, not errors**, and this is a
+deliberate choice rather than an oversight. `verify` is the integrity gate:
+it exits non-zero, it runs on every sync and in CI, and everything it calls
+an error is something that makes the books *wrong* or lets spending vanish
+silently. Overspending an envelope does neither. It is an ordinary, expected
+budgeting event — YNAB's own model is that you cover it from the next
+period's allocation — and since the §5.2 fix it is no longer silent either:
+it is subtracted from `available`, totalled as `total_overspend`, and marked
+on its own row in the rendered report. Failing the build on a normal event
+would teach the user to ignore a red `verify`, which costs us the checks
+above that genuinely matter. So it is surfaced, loudly, without gating.
 
 (Golden-file snapshot tests, §5.2 point 4, live in the test suite, not here
 — they are a property of the test harness, not something a runtime check
@@ -41,13 +56,20 @@ EXPENSE_ACCOUNT_PREFIX = "Expenses:"
 class VerifyResult:
     ok: bool
     errors: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    """Findings worth showing that are not integrity failures — see the module
+    docstring. `notes` never affects `ok` or the process exit code; if a note
+    ever should fail the build, it belongs in `errors` instead."""
 
     def render(self) -> str:
         if self.ok:
-            return "verify: OK"
-        lines = [f"verify: FAILED ({len(self.errors)} error(s))"]
-        for e in self.errors:
-            lines.append(f"  - {e}")
+            lines = ["verify: OK"]
+        else:
+            lines = [f"verify: FAILED ({len(self.errors)} error(s))"]
+            for e in self.errors:
+                lines.append(f"  - {e}")
+        for n in self.notes:
+            lines.append(f"  note: {n}")
         return "\n".join(lines)
 
 
@@ -90,9 +112,16 @@ def _latest_activity_date(entries) -> date | None:
     return max(dates) if dates else None
 
 
-def run_verify() -> VerifyResult:
-    entries, bean_errors, _options_map = load_ledger()
+def verify_entries(entries, bean_errors) -> VerifyResult:
+    """The checks themselves, over an already-loaded ledger.
+
+    Split out from `run_verify` for the same reason `compute_envelope_state`
+    is split from `envelope_report`: the API holds an mtime-cached ledger and
+    must not pay `loader.load_file` again per request (PLAN.md §5.1), while
+    the CLI has nothing loaded and wants the one-call wrapper.
+    """
     errors: list[str] = []
+    notes: list[str] = []
 
     # Check 3: balance assertions / bean-check.
     errors.extend(_format_bean_errors(bean_errors))
@@ -143,7 +172,22 @@ def run_verify() -> VerifyResult:
                 errors.append(
                     f"over-allocated as of {asof.isoformat()}: available = "
                     f"{report.available:.2f} (budgeted cash {report.budgeted_cash:.2f} - "
-                    f"envelope balances {report.total_envelope_balance:.2f})"
+                    f"envelope balances {report.total_envelope_balance:.2f} - "
+                    f"overspend {report.total_overspend:.2f})"
+                )
+            for envelope in report.overspent_envelopes:
+                notes.append(
+                    f'envelope "{envelope.name}" is overspent by '
+                    f"{envelope.overspend:.2f} as of {asof.isoformat()} "
+                    f"(allocated {envelope.allocated:.2f}, spent {envelope.spent:.2f}); "
+                    "that money has already left the bank and is not available "
+                    "to budget — cover it from the next allocation"
                 )
 
-    return VerifyResult(ok=not errors, errors=errors)
+    return VerifyResult(ok=not errors, errors=errors, notes=notes)
+
+
+def run_verify() -> VerifyResult:
+    """Load the ledger from disk and run every check over it."""
+    entries, bean_errors, _options_map = load_ledger()
+    return verify_entries(entries, bean_errors)

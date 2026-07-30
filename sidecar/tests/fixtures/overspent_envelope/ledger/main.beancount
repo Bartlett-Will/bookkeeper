@@ -1,0 +1,29 @@
+option "operating_currency" "USD"
+
+; The exact minimal case from the PLAN.md §5.2 defect note: cash 100,
+; allocate 50 to Groceries, spend 80.
+;
+;   cash            = 100 - 80 = 20
+;   Groceries       = 50 - 80  = -30   (overspent by 30)
+;   Sigma balances  = -30
+;   Sigma max(b, 0) = 0
+;   available       = 20 - 0   = 20    (correct: 20 is all that is left)
+;
+; The old formula computed `cash - Sigma balances` = 20 - (-30) = 50, an
+; "available to budget" figure larger than the total cash in the account.
+; This fixture exists so that number can never come back.
+
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Assets:Checking            USD
+2026-01-01 open Expenses:Food:Groceries    USD
+
+2026-01-01 custom "envelope" "map" "Expenses:Food:Groceries" "Groceries"
+2026-01-01 custom "envelope" "allocate" "Groceries" 50.00 USD
+
+2026-01-01 * "Opening balance"
+    Assets:Checking      100.00 USD
+    Equity:Opening-Balances
+
+2026-01-05 * "Groceries"
+    Assets:Checking      -80.00 USD
+    Expenses:Food:Groceries

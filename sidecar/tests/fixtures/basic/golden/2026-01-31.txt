@@ -6,8 +6,9 @@ Dining Out        150.00         70.00         80.00
 Groceries         600.00        275.00        325.00
 Rent             1200.00       1200.00          0.00
 Transport         120.00         67.00         53.00
-Utilities         100.00        130.00        -30.00
+Utilities         100.00        130.00        -30.00  OVERSPENT
 ----------------------------------------------------
 Budgeted cash:                   3758.00
 Envelope balances (total):        428.00
-Available to budget:             3330.00
+Overspent (total):                 30.00
+Available to budget:             3300.00

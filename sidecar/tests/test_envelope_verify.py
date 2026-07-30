@@ -66,6 +66,46 @@ def test_false_positive_available_does_not_fail(fixture_root):
     assert result.errors == []
 
 
+def test_overspent_envelope_is_a_note_not_a_failure(fixture_root):
+    """PLAN.md §5.2 minimal case (cash 100, allocate 50, spend 80).
+
+    available is 20, so nothing is over-allocated and verify passes -- but
+    the overspend must be reported rather than absorbed. It is a note, not
+    an error, because overspending is an ordinary budgeting event covered
+    from the next allocation, and failing the build on it would teach the
+    user to ignore a red verify.
+    """
+    fixture_root("overspent_envelope")
+    result = run_verify()
+    assert result.ok, result.render()
+    assert result.errors == []
+    assert len(result.notes) == 1
+    assert "Groceries" in result.notes[0]
+    assert "overspent by 30.00" in result.notes[0]
+    assert "  note: " in result.render()
+
+
+def test_overspend_no_longer_silences_the_over_allocation_guard(fixture_root):
+    """THE regression the original fixtures missed.
+
+    Inflows 200, allocations 200 (Groceries 50 + Dining Out 150), 100 spent
+    on Groceries. Cash is 100 but 150 is still committed to Dining Out, so
+    available is -50 and this is a real over-allocation.
+
+    Under the old `cash - Sigma balances` formula available came out to
+    exactly 0 and verify reported OK: the overspent envelope's -50 credited
+    itself back and silenced the one guard meant to catch budgeting money
+    you don't have.
+    """
+    fixture_root("overspend_silences_guard")
+    result = run_verify()
+    assert not result.ok, result.render()
+    assert any("over-allocated" in e for e in result.errors), result.render()
+    assert any("-50.00" in e for e in result.errors), result.render()
+    # And the cause is named alongside the symptom.
+    assert any("Groceries" in n and "overspent by 50.00" in n for n in result.notes)
+
+
 def test_bean_check_errors_are_surfaced(fixture_root):
     fixture_root("bean_check_failure")
     result = run_verify()

@@ -10,4 +10,5 @@ Utilities         250.00        130.00        120.00
 ----------------------------------------------------
 Budgeted cash:                   4877.00
 Envelope balances (total):       1267.00
+Overspent (total):                  0.00
 Available to budget:             3610.00

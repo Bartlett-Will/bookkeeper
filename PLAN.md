@@ -274,39 +274,59 @@ Envelope state is a **pure function** of (ledger entries, directives):
 
 ```
 balance(E, asof) = Σ allocate(E, t≤asof) − Σ postings(accounts mapped to E, t≤asof)
-available(asof)  = Σ budgeted-cash(asof) − Σ balance(E, asof) over all E
+available(asof)  = Σ budgeted-cash(asof) − Σ max(balance(E, asof), 0) over all E
 ```
 
 Same inputs always produce the same outputs, so it is straightforwardly testable
 with golden-file tests over a fixture ledger.
 
-> **Defect in this formula (found on real data, 2026-07-30). Not yet fixed.**
-> `available` credits back **negative** envelope balances, but an overspent
+> **Defect in this formula (found on real data, 2026-07-30). FIXED 2026-07-30
+> in Phase 3.** The analysis below is kept because it documents *why* the
+> formula reads the way it does; the past tense is the correction. The
+> `max(·, 0)` above is the fix, and it is covered by
+> `tests/fixtures/overspent_envelope/` (the minimal case worked below, golden
+> file included) and `tests/fixtures/overspend_silences_guard/` (the silenced
+> guard). Overspend is now surfaced explicitly — `EnvelopeReport.total_overspend`,
+> an `OVERSPENT` marker and an `Overspent (total):` line in `render()`, and a
+> `verify` **note** per overspent envelope. It is a note rather than an error
+> because overspending is an ordinary budgeting event covered from the next
+> allocation, not a loss of integrity — and, unlike before, it is no longer
+> silent.
+>
+> **The original defect, as found:**
+> `available` credited back **negative** envelope balances, but an overspent
 > envelope's money has already left the bank — it is not available to re-budget.
 >
 > Minimal case: cash 100, allocate 50 to Groceries, spend 80. Real cash is 20
 > and Groceries is 30 in the hole, so at most 20 can be budgeted. The system
-> reports:
+> reported:
 > ```
 > Budgeted cash:                     20.00
 > Envelope balances (total):        -30.00
 > Available to budget:               50.00     <-- exceeds cash
 > verify: OK                                   <-- guard does not fire
 > ```
-> Two consequences, the second worse than the first: `available` can exceed
-> total cash, and the §5.2 over-allocation check is **silenced**, because
-> `available >= 0` passes comfortably. The one guard meant to catch
-> "money you don't have" stops working precisely when an envelope is overspent.
+> Two consequences, the second worse than the first: `available` could exceed
+> total cash, and the §5.2 over-allocation check was **silenced**, because
+> `available >= 0` passed comfortably. The one guard meant to catch
+> "money you don't have" stopped working precisely when an envelope was
+> overspent. Worth stating plainly, because it explains why the old check
+> caught so little: `cash − Σ balance(E)` reduces algebraically to
+> `Σ inflows − Σ allocations`, so spending cancelled out of it entirely and it
+> could only ever detect allocating more than had *ever* come in.
 >
-> Fix direction: negative balances must not credit back —
+> Fix: negative balances must not credit back —
 > `available = Σ budgeted-cash − Σ max(balance(E), 0)`, giving 20 here and
-> restoring the guard. Overspend then needs its own explicit surfacing
-> (YNAB-style, it is covered from the next period's allocation) rather than
-> silently inflating headroom.
+> restoring the guard. Overspend gets its own explicit surfacing (YNAB-style,
+> it is covered from the next period's allocation) rather than silently
+> inflating headroom.
 >
 > Why the fixtures missed it: they covered over-allocation (allocate > cash)
 > and the spend-within-allocation false positive, but never an **overspent
-> envelope** (spend > allocation). Real data hit it on the first budget.
+> envelope** (spend > allocation). Real data hit it on the first budget. Both
+> gaps now have fixtures, and the `false_positive_available` regression above
+> is still green — the fix clips negatives only, and changes nothing when
+> every envelope is in the black.
 
 **Tradeoff, noted once so the decision stays legible:** because envelope state
 lives outside the double-entry graph, `bean-check` does not validate it. In a
