@@ -103,6 +103,33 @@ cat ledger/accounts-simplefin.beancount
 cat ledger/balances.beancount
 ```
 
+And look at what the bank actually sent. A complete captured response — the
+exact input that produced the committed ledger — is checked in at
+[`samples/simplefin-response.json`](./samples/simplefin-response.json), with
+annotations in [`samples/README.md`](./samples/README.md):
+
+```bash
+head -30 samples/simplefin-response.json
+```
+
+It's worth reading side by side with the ledger, because three things are
+visible in the raw data that explain the design:
+
+- **A transaction is almost nothing** — an amount and a bank-mangled string.
+  There's no merchant identity to categorize from, which is the whole reason
+  Phase 3 is hard.
+- **Transaction ids collide across accounts.** 338 transactions, **169 distinct
+  ids** — every single one appears in both accounts on a *different*
+  transaction (`1777795200` is `-15.50` in Savings and `-19.96` in Checking).
+  Deduplicating on the bare id silently deleted an entire account's history.
+- **A soft error rides along with a successful response** — `"Requested date
+  range exceeds limit of 90 days and was capped."` sits in a top-level `errors`
+  array next to HTTP 200 and perfectly good data.
+
+Your own raw responses accumulate in `data/raw/` on every sync (so re-parsing
+never costs an API call). That directory is gitignored permanently — from
+Phase 6 it holds real bank data.
+
 ### 2. Prove it's idempotent
 
 The strongest thing to show. Run the same command again:
