@@ -5,8 +5,9 @@ An AI-assisted envelope-budgeting bookkeeper over a plain-text
 [SimpleFIN](https://www.simplefin.org/), with a local LLM. Single user,
 localhost only, no paid API.
 
-**Status: Phases 0–2 of 7 complete.** The ledger pipeline works end to end
-against live data. The AI half does not exist yet. Read
+**Status: Phases 0–3 of 7 complete.** The ledger pipeline works end to end
+against live data, and transactions now get categorized by a tiered
+classifier. The chat half does not exist yet. Read
 [What you can demo](#what-you-can-demo) before expecting a chatbot that
 answers questions about your budget — it can't yet.
 
@@ -23,8 +24,8 @@ See [PLAN.md](./PLAN.md) for the full design and phase breakdown.
 | Balance assertions reconciling against bank-reported balances | ✅ working |
 | Envelope balances computed from `custom` directives | ✅ working |
 | Ledger + envelope integrity checks (`verify`) | ✅ working |
+| Tiered categorization (`categorize`, `review`, `eval`) | ✅ working — accuracy measured on a synthetic corpus only |
 | Chat UI running against a local model | ✅ shell only — see below |
-| **AI categorization of transactions** | ❌ Phase 3 — not built |
 | **Chat that can answer questions about your books** | ❌ Phase 4 — not built |
 | **Expense reports / charts** | ❌ Phase 5 — not built |
 | **Real bank data** | ❌ Phase 6 — demo server only |
@@ -175,11 +176,12 @@ verify: FAILED (1 error(s))
     count against any envelope
 ```
 
-**This red is the point, not a bug.** All 338 transactions are uncategorized
-(categorization is Phase 3), and the system refuses to let uncategorized
-spending quietly vanish from the budget view. Because envelope state is
-computed rather than posted, `bean-check` can't validate it — this check is the
-substitute guard. It goes green when Phase 3 assigns real expense accounts.
+**This red is the point, not a bug.** On a fresh checkout all 338 transactions
+are still uncategorized, and the system refuses to let uncategorized spending
+quietly vanish from the budget view. Because envelope state is computed rather
+than posted, `bean-check` can't validate it — this check is the substitute
+guard. It goes green once `categorize --apply` (next section) assigns real
+expense accounts and those accounts are mapped to envelopes.
 
 ### 5. Show envelope math
 
@@ -199,11 +201,117 @@ To see the engine actually compute, add allocations to `ledger/budget.beancount`
 ```
 
 and recategorize a few postings from `Expenses:Unknown` to
-`Expenses:Food:Groceries`. Allocated / spent / balance then compute correctly,
-including refunds crediting envelopes back. (Demo-server amounts are large and
-unrealistic — it's synthetic data.)
+`Expenses:Food:Groceries` (or let `categorize` do it — see below). Allocated /
+spent / balance then compute correctly, including refunds crediting envelopes
+back. (Demo-server amounts are large and unrealistic — it's synthetic data.)
 
-### 6. Chat with a local model, and the sidecar boundary
+Overspend an envelope and the report says so out loud:
+
+```
+Utilities         100.00        130.00        -30.00  OVERSPENT
+----------------------------------------------------
+Budgeted cash:                   3758.00
+Envelope balances (total):        428.00
+Overspent (total):                 30.00
+Available to budget:             3300.00
+```
+
+Money already spent out of an envelope has left the bank, so it is not credited
+back into `Available to budget` — the summary block reads as arithmetic,
+`cash − balances − overspend`. Overspending is normal (you cover it from next
+month's allocation), so `verify` reports it as a **note**, not a failure.
+
+### 6. Categorize transactions
+
+Everything lands in `Expenses:Unknown` at sync time. `categorize` predicts a
+real account for each one, using a cascade of tiers where the **first hit
+wins**:
+
+| Tier | What it does |
+|---|---|
+| **memory** | Exact match on a normalized description you've confirmed before. Majority vote over past confirmations; a tie abstains. |
+| **rule** | Your own patterns from `data/rules.yaml`. First match in file order. |
+| **mcc** | The merchant category code, when the bank sends one. Undocumented in the SimpleFIN spec — see [Known issues](#known-issues). |
+| **statistical** | A self-contained naive Bayes over char n-grams and tokens, trained on what you've already confirmed. No scikit-learn. |
+| **llm** | Local Qwen3, for descriptions genuinely unlike anything seen. The account is a JSON-Schema `enum` of accounts actually open in your ledger, so a hallucinated account is unrepresentable rather than merely unlikely. |
+
+A tier that doesn't know **abstains** rather than guessing — the transaction
+falls through to the next tier, and out the bottom into the review queue.
+
+```bash
+uv run --directory sidecar bookkeeper categorize            # dry run: prints, writes nothing
+uv run --directory sidecar bookkeeper categorize --no-llm   # deterministic + statistical only
+uv run --directory sidecar bookkeeper review                # what's waiting on you
+```
+
+**Nothing is written unless you ask.** `categorize` is a dry run by default;
+`--apply` writes, and even then only predictions that clear the auto-apply
+threshold are applied unattended. **That threshold ships unset**, which means
+review-everything: every prediction goes to the queue for a human, and the
+ledger is not touched automatically at all. Turning it on is a deliberate act —
+set `auto_apply_threshold` in `data/categorize-policy.json` (git-tracked, so
+raising autonomy over your books shows up in the history with a date and a
+diff), or `BOOKKEEPER_AUTO_APPLY_THRESHOLD` for a single run.
+
+Set it from measured evidence, not a guess. `bookkeeper eval` reports per-tier
+top-1 accuracy, coverage, and precision per confidence bucket:
+
+```bash
+uv run --directory sidecar bookkeeper eval          # deterministic tiers; hermetic, no Ollama
+uv run --directory sidecar bookkeeper eval --llm    # include the LLM tier (slow)
+```
+
+> **Read [`docs/phase3-accuracy.md`](./docs/phase3-accuracy.md) before trusting
+> any number it prints.** The SimpleFIN demo server has 338 transactions with
+> **three distinct descriptions** between them, so accuracy against it is
+> meaningless — tier 1 memorizes all three and scores 100%. The real eval runs
+> against a synthetic corpus of realistic bank-mangled strings, which measures
+> whether the cascade *mechanically works*, not how well it will do on your
+> spending. **Real-world accuracy is a Phase 6 question and has not been
+> measured.**
+
+Applied categorizations are stamped with metadata (`bookkeeper-tier`,
+`bookkeeper-confidence`, `bookkeeper-decision`) so you can always tell a
+machine-assigned posting from one you wrote, and an unattended auto-apply from
+a human confirmation. Ledger writes are git-committed, so any bad batch is one
+`git revert` away.
+
+#### The two files you edit
+
+Both live in `data/`, are plain text, and are git-tracked on purpose — a diff
+on either is an audit trail of what the system has been told.
+
+**`data/rules.yaml`** — things you know and shouldn't have to confirm twice.
+A list of rules; first match wins; `pattern` is a case-insensitive regex and
+`account` must be open in your ledger (both are validated, loudly, rather than
+misfiling quietly):
+
+```yaml
+- name: PG&E
+  pattern: 'PG&E|PACIFIC GAS'
+  account: Expenses:Home:Utilities
+
+- name: Paycheck
+  pattern: 'ACME ROBOTICS.*PAYROLL'
+  account: Income:Salary
+  sign: positive        # optional: only match deposits
+
+- name: Big-ticket hardware
+  pattern: 'HOME DEPOT'
+  account: Expenses:Home:Improvement
+  amount_max: -200      # optional bounds, on the SIGNED amount:
+                        # spending is negative, so "$200 or more" is <= -200
+```
+
+`pattern` is matched against the description *and* the payee, so either can
+trigger a rule.
+
+**`data/memory.json`** — written *for* you, not by you. Every time you confirm
+or correct a review card it records `normalized description → account`, with a
+count. You don't have to edit it, but it's readable and you can, and its git
+history is the record of what you've taught the system.
+
+### 7. Chat with a local model, and the sidecar boundary
 
 ```bash
 make dev        # starts Ollama, the Python sidecar, and Next.js together
@@ -224,7 +332,9 @@ that reads your books. That's Phase 4.
 ### What you cannot demo
 
 - Asking the chatbot anything about your budget or transactions
-- Any automatic categorization
+- Categorization *accuracy you can trust* — the mechanism works, but the only
+  corpus it has been measured against is synthetic (see
+  [`docs/phase3-accuracy.md`](./docs/phase3-accuracy.md))
 - Expense reports, charts, or trends
 - Real bank accounts
 
@@ -239,7 +349,7 @@ Next.js (vercel/ai-chatbot, stripped)  :3000
       │ HTTP
       ▼
 Python sidecar (FastAPI)               :8000
-   simplefin · ingest · envelope · reports
+   simplefin · ingest · categorize · envelope · reports
    SOLE WRITER to the ledger
       │
       ▼
@@ -259,6 +369,9 @@ ledger/
   budget.beancount            your envelope allocations (ships empty)
   transactions/YYYY.beancount GENERATED
   balances.beancount          GENERATED — bank-reported balance assertions
+data/rules.yaml               your categorization rules (hand-edited)
+data/memory.json              learned description → account (written for you)
+data/categorize-policy.json   auto-apply threshold; absent = review everything
 data/secrets/                 Access URL, 0600, gitignored
 sidecar/                      Python: bookkeeper package + tests
 web/                          Next.js chat app
@@ -273,7 +386,7 @@ validating them (hence `verify`). See PLAN.md §5.2.
 ## Development
 
 ```bash
-cd sidecar && uv run pytest        # 95 passed, 1 skipped
+cd sidecar && uv run pytest
 cd sidecar && uv run ruff check .
 cd web && pnpm exec tsc --noEmit && pnpm run build
 ```
@@ -281,16 +394,29 @@ cd web && pnpm exec tsc --noEmit && pnpm run build
 The one skipped test hits the live SimpleFIN demo server; enable with
 `RUN_SIMPLEFIN_INTEGRATION=1`.
 
+The sidecar's HTTP surface is what Phase 4 will consume. It is browsable at
+<http://localhost:8000/docs> once `bookkeeper serve` is running:
+
+| Endpoint | |
+|---|---|
+| `GET /health` | liveness + beancount version |
+| `GET /accounts` | asset accounts and balances, read from the ledger |
+| `GET /envelopes?asof=` | envelope balances, overspend, available to budget |
+| `GET /verify` | integrity checks; a failing ledger is a 200 with `ok: false` |
+| `GET /review-queue?limit=` | transactions awaiting human categorization |
+| `POST /sync` | fetch from SimpleFIN and write the ledger |
+| `POST /categorize` | predict accounts; **dry run unless `{"apply": true}`** |
+
 ---
 
 ## Known issues
 
-**`available to budget` is wrong when an envelope is overspent.** The formula
-credits back negative envelope balances, but overspent money has already left
-the bank. Cash 100, allocate 50, spend 80 → real cash is 20, but the system
-reports `Available to budget: 50.00` and `verify: OK`. Worse, this *silences*
-the over-allocation guard, which is the one check meant to catch budgeting money
-you don't have. Fix direction and reproduction in PLAN.md §5.2. **Not yet fixed.**
+**Categorization accuracy is unmeasured on real data.** The cascade works and
+is tested, but the demo server offers three distinct transaction descriptions
+in total, so every accuracy figure the eval harness can produce today comes
+from a synthetic corpus. It measures mechanics, not real-world performance.
+See [`docs/phase3-accuracy.md`](./docs/phase3-accuracy.md). This is why
+auto-apply ships off.
 
 **`bookkeeper claim` fails against the public demo token.** The bridge migrated
 to `beta-bridge.simplefin.org` and its redirect drops the URL path; claiming
@@ -318,9 +444,6 @@ or add an ignore.
 
 ## What's next (PLAN.md)
 
-- **Phase 3** — tiered categorization: exact-match memory → user rules →
-  statistical → local LLM for the tail only, plus an accuracy harness. Ships in
-  review-everything mode; auto-apply only once measured precision earns it.
 - **Phase 4** — the six chat tools and generative UI, so the chatbot can
   actually read your books. Clicks bypass the LLM entirely.
 - **Phase 5** — expense reports and a model bake-off.
