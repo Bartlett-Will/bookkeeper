@@ -1,0 +1,2459 @@
+{
+  "_readme": [
+    "SYNTHETIC, HAND-BUILT LABELED CORPUS. This is not real bank data and",
+    "the accuracy numbers it produces are NOT real-world accuracy numbers.",
+    "",
+    "Why it exists: the SimpleFIN demo server emits 3 distinct descriptions",
+    "across 338 transactions, with incoherent labels (fishing bait carrying",
+    "MCC 5812, Eating Places). Any accuracy measured on it is degenerate --",
+    "tier 1 reaches 100% after three confirmations and 'beats the",
+    "majority-class baseline' passes vacuously. See PLAN.md 3.1 and the",
+    "Phase 3 handoff.",
+    "",
+    "What it measures: the MECHANICS of the cascade -- that the tiers fire",
+    "in the right order, that the memory tier generalizes across bank",
+    "manglings of the same merchant, that MCC is or is not separable, that",
+    "confidence ordering means something. It bounds the implementation, not",
+    "the product. Real accuracy is a Phase 6 question against real bank data.",
+    "",
+    "How it was built: merchant surface forms were hand-authored to match",
+    "the bank-mangling shapes PLAN.md 3.1 names (SQ *..., TST* ..., ACH",
+    "DEBIT - ..., POS DEBIT ... #nnnn, AMZN Mktp US*...), then expanded into",
+    "dated instances by a seeded RNG. Labels are drawn only from the chart",
+    "of accounts in ledger/accounts.beancount.",
+    "",
+    "Deliberate difficulty:",
+    "  - the same merchant under several manglings and store numbers",
+    "  - SAFEWAY (groceries) vs SAFEWAY FUEL (gas), COSTCO WHSE vs COSTCO GAS",
+    "  - MCC 4900 shared by electric and water; MCC 4899 shared by internet",
+    "    and Netflix -- the MCC tier provably cannot separate these",
+    "  - WALGREENS and AMZN Mktp carry two different true labels, an",
+    "    irreducible error floor no tier can beat",
+    "  - CHECK #nnnn for rent: the number changes every time, so exact",
+    "    memory can never match one",
+    "  - entries flagged 'holdout' are novel one-off merchants pinned to the",
+    "    test split; tiers 1-3 have never seen them by construction",
+    "  - roughly two thirds of entries carry no payee and a third no MCC"
+  ],
+  "accounts": [
+    "Expenses:Food:Groceries",
+    "Expenses:Food:Dining",
+    "Expenses:Transport:Gas",
+    "Expenses:Housing:Rent",
+    "Expenses:Utilities:Electric",
+    "Expenses:Utilities:Water",
+    "Expenses:Utilities:Internet",
+    "Expenses:Subscriptions",
+    "Expenses:Health",
+    "Income:Salary"
+  ],
+  "entries": [
+    {
+      "id": "corpus-0023",
+      "date": "2026-01-02",
+      "description": "SAFEWAY #92905 SAN FRANCISCO CA",
+      "amount": "-20.65",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0047",
+      "date": "2026-01-02",
+      "description": "WHOLEFDS SFO 50306",
+      "amount": "-34.46",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Whole Foods Market"
+    },
+    {
+      "id": "corpus-0106",
+      "date": "2026-01-02",
+      "description": "TST* THE HIDEOUT",
+      "amount": "-75.27",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0190",
+      "date": "2026-01-02",
+      "description": "ONLINE XFER TO BAY PROPERTY MGMT",
+      "amount": "-2450.00",
+      "account": "Expenses:Housing:Rent"
+    },
+    {
+      "id": "corpus-0203",
+      "date": "2026-01-02",
+      "description": "SFPUC UTILITY PMT 37318",
+      "amount": "-57.74",
+      "account": "Expenses:Utilities:Water",
+      "mcc": "4900",
+      "payee": "SFPUC"
+    },
+    {
+      "id": "corpus-0030",
+      "date": "2026-01-03",
+      "description": "TRADER JOE'S #53085 QPS",
+      "amount": "-69.83",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Trader Joe's"
+    },
+    {
+      "id": "corpus-0132",
+      "date": "2026-01-03",
+      "description": "STARBUCKS STORE 12356",
+      "amount": "-10.88",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0008",
+      "date": "2026-01-04",
+      "description": "SAFEWAY #29759 SAN FRANCISCO CA",
+      "amount": "-110.60",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0118",
+      "date": "2026-01-04",
+      "description": "DD *DOORDASH BURGERKING",
+      "amount": "-32.96",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "DoorDash"
+    },
+    {
+      "id": "corpus-0262",
+      "date": "2026-01-04",
+      "description": "ONEMEDICAL.COM 68249",
+      "amount": "-112.83",
+      "account": "Expenses:Health"
+    },
+    {
+      "id": "corpus-0207",
+      "date": "2026-01-05",
+      "description": "SONIC.NET INC MONTHLY",
+      "amount": "-50.00",
+      "account": "Expenses:Utilities:Internet",
+      "mcc": "4899",
+      "payee": "Sonic"
+    },
+    {
+      "id": "corpus-0237",
+      "date": "2026-01-05",
+      "description": "NYTimes*NYTimes 53078",
+      "amount": "-9.24",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968"
+    },
+    {
+      "id": "corpus-0086",
+      "date": "2026-01-07",
+      "description": "SQ *COFFEE 4TH ST 85519",
+      "amount": "-12.64",
+      "account": "Expenses:Food:Dining",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0219",
+      "date": "2026-01-07",
+      "description": "NETFLIX.COM 51940",
+      "amount": "-17.98",
+      "account": "Expenses:Subscriptions",
+      "mcc": "4899"
+    },
+    {
+      "id": "corpus-0236",
+      "date": "2026-01-07",
+      "description": "NYTimes*NYTimes 1344",
+      "amount": "-12.09",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968"
+    },
+    {
+      "id": "corpus-0021",
+      "date": "2026-01-08",
+      "description": "POS PURCHASE SAFEWAY 80966",
+      "amount": "-66.04",
+      "account": "Expenses:Food:Groceries",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0130",
+      "date": "2026-01-08",
+      "description": "STARBUCKS STORE 57559",
+      "amount": "-7.45",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "Starbucks"
+    },
+    {
+      "id": "corpus-0058",
+      "date": "2026-01-09",
+      "description": "COSTCO WHSE #15303",
+      "amount": "-219.24",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5300",
+      "payee": "Costco Wholesale"
+    },
+    {
+      "id": "corpus-0065",
+      "date": "2026-01-12",
+      "description": "BI-RITE MARKET 18TH ST",
+      "amount": "-44.20",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0077",
+      "date": "2026-01-12",
+      "description": "SQ *COFFEE 4TH ST 98711",
+      "amount": "-17.13",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0102",
+      "date": "2026-01-12",
+      "description": "TST* THE HIDEOUT",
+      "amount": "-82.56",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "The Hideout"
+    },
+    {
+      "id": "corpus-0150",
+      "date": "2026-01-12",
+      "description": "PY *SUSHI RAN",
+      "amount": "-50.63",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0197",
+      "date": "2026-01-12",
+      "description": "ACH DEBIT - PG&E WEB ONLINE",
+      "amount": "-190.95",
+      "account": "Expenses:Utilities:Electric",
+      "payee": "PG&E"
+    },
+    {
+      "id": "corpus-0281",
+      "date": "2026-01-12",
+      "description": "DIR DEP ACME ROBOTIC 3853 PPD ID",
+      "amount": "3136.93",
+      "account": "Income:Salary"
+    },
+    {
+      "id": "corpus-0055",
+      "date": "2026-01-13",
+      "description": "WHOLEFDS SFO 96787",
+      "amount": "-56.97",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Whole Foods Market"
+    },
+    {
+      "id": "corpus-0285",
+      "date": "2026-01-13",
+      "description": "DIRECT DEP - ACME ROBOTICS PAYROLL",
+      "amount": "3131.32",
+      "account": "Income:Salary"
+    },
+    {
+      "id": "corpus-0046",
+      "date": "2026-01-14",
+      "description": "WHOLE FOODS MKT #8465",
+      "amount": "-66.01",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Whole Foods Market"
+    },
+    {
+      "id": "corpus-0287",
+      "date": "2026-01-14",
+      "description": "SQ *ANDYTOWN COFFEE",
+      "amount": "-7.25",
+      "account": "Expenses:Food:Dining",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0115",
+      "date": "2026-01-15",
+      "description": "CHIPOTLE ONLINE 18732",
+      "amount": "-18.94",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0015",
+      "date": "2026-01-16",
+      "description": "POS PURCHASE SAFEWAY 92615",
+      "amount": "-122.42",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0161",
+      "date": "2026-01-16",
+      "description": "CHEVRON 0042038",
+      "amount": "-62.00",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0001",
+      "date": "2026-01-17",
+      "description": "POS DEBIT SAFEWAY #91847",
+      "amount": "-87.73",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0129",
+      "date": "2026-01-18",
+      "description": "DOORDASH*CURRYUP",
+      "amount": "-49.16",
+      "account": "Expenses:Food:Dining",
+      "payee": "DoorDash"
+    },
+    {
+      "id": "corpus-0260",
+      "date": "2026-01-18",
+      "description": "CVS/PHARMACY #62776",
+      "amount": "-28.00",
+      "account": "Expenses:Health",
+      "mcc": "5912",
+      "payee": "CVS Pharmacy"
+    },
+    {
+      "id": "corpus-0283",
+      "date": "2026-01-18",
+      "description": "ACME ROBOTICS PAYROLL PPD",
+      "amount": "3192.81",
+      "account": "Income:Salary",
+      "payee": "Acme Robotics"
+    },
+    {
+      "id": "corpus-0084",
+      "date": "2026-01-19",
+      "description": "SQ *COFFEE 4TH ST",
+      "amount": "-18.10",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0074",
+      "date": "2026-01-21",
+      "description": "SQ *COFFEE 4TH ST 66586",
+      "amount": "-15.51",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0083",
+      "date": "2026-01-22",
+      "description": "SQ *COFFEE 4TH ST 8104",
+      "amount": "-11.85",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0229",
+      "date": "2026-01-22",
+      "description": "Amazon Prime*7EU2H",
+      "amount": "-13.11",
+      "account": "Expenses:Subscriptions"
+    },
+    {
+      "id": "corpus-0244",
+      "date": "2026-01-22",
+      "description": "WALGREENS STORE 51192",
+      "amount": "-72.94",
+      "account": "Expenses:Health",
+      "mcc": "5912",
+      "payee": "Walgreens"
+    },
+    {
+      "id": "corpus-0265",
+      "date": "2026-01-22",
+      "description": "AMZN Mktp US*VQFBL",
+      "amount": "-82.59",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5942"
+    },
+    {
+      "id": "corpus-0266",
+      "date": "2026-01-23",
+      "description": "AMZN MKTP US 2ZY9R",
+      "amount": "-50.79",
+      "account": "Expenses:Health"
+    },
+    {
+      "id": "corpus-0085",
+      "date": "2026-01-24",
+      "description": "SQ*COFFEE 4TH ST 93877",
+      "amount": "-4.51",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0163",
+      "date": "2026-01-24",
+      "description": "CHEVRON 005366",
+      "amount": "-35.68",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0210",
+      "date": "2026-01-24",
+      "description": "SONIC TELECOM LLC AUTOPAY",
+      "amount": "-50.00",
+      "account": "Expenses:Utilities:Internet",
+      "mcc": "4899"
+    },
+    {
+      "id": "corpus-0014",
+      "date": "2026-01-25",
+      "description": "SAFEWAY #77757 SAN FRANCISCO CA",
+      "amount": "-50.06",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0276",
+      "date": "2026-01-25",
+      "description": "DIRECT DEP - ACME ROBOTICS PAYROLL",
+      "amount": "3158.14",
+      "account": "Income:Salary",
+      "payee": "Acme Robotics"
+    },
+    {
+      "id": "corpus-0011",
+      "date": "2026-01-26",
+      "description": "SAFEWAY #56589 SAN FRANCISCO CA",
+      "amount": "-81.12",
+      "account": "Expenses:Food:Groceries",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0230",
+      "date": "2026-01-28",
+      "description": "AMZN Digital*BHNBT",
+      "amount": "-10.26",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968"
+    },
+    {
+      "id": "corpus-0243",
+      "date": "2026-01-28",
+      "description": "WALGREENS #83749",
+      "amount": "-17.69",
+      "account": "Expenses:Health",
+      "mcc": "5912"
+    },
+    {
+      "id": "corpus-0012",
+      "date": "2026-01-31",
+      "description": "POS PURCHASE SAFEWAY 2660",
+      "amount": "-29.66",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0026",
+      "date": "2026-01-31",
+      "description": "SAFEWAY #65469 SAN FRANCISCO CA",
+      "amount": "-22.84",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0032",
+      "date": "2026-02-01",
+      "description": "TRADER JOE S 53807",
+      "amount": "-61.49",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0144",
+      "date": "2026-02-02",
+      "description": "SQ *BLUE BOTTLE COFFEE 37405",
+      "amount": "-21.47",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0272",
+      "date": "2026-02-02",
+      "description": "AMZN MKTP US PK3E2",
+      "amount": "-47.38",
+      "account": "Expenses:Health"
+    },
+    {
+      "id": "corpus-0004",
+      "date": "2026-02-03",
+      "description": "POS DEBIT SAFEWAY #51883",
+      "amount": "-104.77",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0067",
+      "date": "2026-02-03",
+      "description": "BI-RITE MARKET 18TH ST",
+      "amount": "-30.03",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0149",
+      "date": "2026-02-03",
+      "description": "PY*SUSHI RAN MILL VALLEY",
+      "amount": "-47.80",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0258",
+      "date": "2026-02-03",
+      "description": "CVS/PHARMACY #63078",
+      "amount": "-66.00",
+      "account": "Expenses:Health",
+      "payee": "CVS Pharmacy"
+    },
+    {
+      "id": "corpus-0031",
+      "date": "2026-02-04",
+      "description": "TRADER JOES #73678",
+      "amount": "-117.30",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0135",
+      "date": "2026-02-04",
+      "description": "STARBUCKS #52032",
+      "amount": "-21.15",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0227",
+      "date": "2026-02-05",
+      "description": "Amazon Prime*LFBVP",
+      "amount": "-10.09",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968"
+    },
+    {
+      "id": "corpus-0238",
+      "date": "2026-02-05",
+      "description": "NYTimes*NYTimes 418",
+      "amount": "-14.21",
+      "account": "Expenses:Subscriptions"
+    },
+    {
+      "id": "corpus-0268",
+      "date": "2026-02-05",
+      "description": "AMZN MKTP US 1WHT9",
+      "amount": "-37.77",
+      "account": "Expenses:Health"
+    },
+    {
+      "id": "corpus-0104",
+      "date": "2026-02-06",
+      "description": "TST* THE HIDEOUT",
+      "amount": "-41.45",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "The Hideout"
+    },
+    {
+      "id": "corpus-0159",
+      "date": "2026-02-07",
+      "description": "CHEVRON 0049950",
+      "amount": "-69.01",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Chevron"
+    },
+    {
+      "id": "corpus-0155",
+      "date": "2026-02-08",
+      "description": "CHEVRON 0023561",
+      "amount": "-61.73",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Chevron"
+    },
+    {
+      "id": "corpus-0122",
+      "date": "2026-02-10",
+      "description": "DD *DOORDASH POKEWORLD",
+      "amount": "-20.02",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "DoorDash"
+    },
+    {
+      "id": "corpus-0101",
+      "date": "2026-02-11",
+      "description": "TST* THE HIDEOUT - SF",
+      "amount": "-75.98",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0188",
+      "date": "2026-02-11",
+      "description": "ACH DEBIT RENTPAYMENT COM WEB",
+      "amount": "-2450.00",
+      "account": "Expenses:Housing:Rent"
+    },
+    {
+      "id": "corpus-0256",
+      "date": "2026-02-12",
+      "description": "CVS/PHARMACY #49461",
+      "amount": "-84.43",
+      "account": "Expenses:Health",
+      "mcc": "5912"
+    },
+    {
+      "id": "corpus-0113",
+      "date": "2026-02-13",
+      "description": "CHIPOTLE ONLINE 94259",
+      "amount": "-37.72",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "Chipotle"
+    },
+    {
+      "id": "corpus-0211",
+      "date": "2026-02-13",
+      "description": "SONIC.NET INC MONTHLY",
+      "amount": "-50.00",
+      "account": "Expenses:Utilities:Internet"
+    },
+    {
+      "id": "corpus-0018",
+      "date": "2026-02-14",
+      "description": "POS PURCHASE SAFEWAY 53539",
+      "amount": "-34.60",
+      "account": "Expenses:Food:Groceries",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0076",
+      "date": "2026-02-14",
+      "description": "SQ*COFFEE 4TH ST 4315",
+      "amount": "-13.91",
+      "account": "Expenses:Food:Dining",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0239",
+      "date": "2026-02-14",
+      "description": "NYTimes*NYTimes 83425",
+      "amount": "-17.18",
+      "account": "Expenses:Subscriptions"
+    },
+    {
+      "id": "corpus-0042",
+      "date": "2026-02-15",
+      "description": "TRADER JOE'S #17534 QPS",
+      "amount": "-89.59",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0178",
+      "date": "2026-02-15",
+      "description": "COSTCO GAS #90363",
+      "amount": "-40.52",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Costco Gas"
+    },
+    {
+      "id": "corpus-0193",
+      "date": "2026-02-16",
+      "description": "CHECK #34909",
+      "amount": "-2450.00",
+      "account": "Expenses:Housing:Rent"
+    },
+    {
+      "id": "corpus-0233",
+      "date": "2026-02-16",
+      "description": "ADOBE INC 67U1J",
+      "amount": "-25.73",
+      "account": "Expenses:Subscriptions"
+    },
+    {
+      "id": "corpus-0068",
+      "date": "2026-02-17",
+      "description": "BI-RITE MARKET 18TH ST",
+      "amount": "-27.67",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0167",
+      "date": "2026-02-17",
+      "description": "SHELL SERVICE STATION 61590",
+      "amount": "-68.79",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0156",
+      "date": "2026-02-18",
+      "description": "CHEVRON 85442",
+      "amount": "-41.85",
+      "account": "Expenses:Transport:Gas"
+    },
+    {
+      "id": "corpus-0225",
+      "date": "2026-02-18",
+      "description": "SPOTIFY USA 67392",
+      "amount": "-12.18",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968",
+      "payee": "Spotify"
+    },
+    {
+      "id": "corpus-0010",
+      "date": "2026-02-20",
+      "description": "POS DEBIT SAFEWAY #35185",
+      "amount": "-74.20",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0174",
+      "date": "2026-02-20",
+      "description": "ARCO #46428 PAYMENT",
+      "amount": "-34.60",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0088",
+      "date": "2026-02-21",
+      "description": "SQ*COFFEE 4TH ST 39802",
+      "amount": "-12.75",
+      "account": "Expenses:Food:Dining",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0137",
+      "date": "2026-02-21",
+      "description": "STARBUCKS #83569",
+      "amount": "-4.65",
+      "account": "Expenses:Food:Dining",
+      "payee": "Starbucks"
+    },
+    {
+      "id": "corpus-0141",
+      "date": "2026-02-21",
+      "description": "SQ *BLUE BOTTLE COFFEE",
+      "amount": "-18.98",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0007",
+      "date": "2026-02-22",
+      "description": "POS DEBIT SAFEWAY #75943",
+      "amount": "-66.75",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0111",
+      "date": "2026-02-23",
+      "description": "CHIPOTLE ONLINE 64534",
+      "amount": "-37.79",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "Chipotle"
+    },
+    {
+      "id": "corpus-0171",
+      "date": "2026-02-25",
+      "description": "SHELL SERVICE STATION 8963",
+      "amount": "-28.82",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Shell"
+    },
+    {
+      "id": "corpus-0194",
+      "date": "2026-02-25",
+      "description": "ACH DEBIT - PG&E WEB ONLINE",
+      "amount": "-153.74",
+      "account": "Expenses:Utilities:Electric",
+      "mcc": "4900",
+      "payee": "PG&E"
+    },
+    {
+      "id": "corpus-0196",
+      "date": "2026-02-26",
+      "description": "PG&E ONLINE PMT",
+      "amount": "-87.01",
+      "account": "Expenses:Utilities:Electric",
+      "mcc": "4900",
+      "payee": "PG&E"
+    },
+    {
+      "id": "corpus-0282",
+      "date": "2026-02-26",
+      "description": "DIRECT DEP - ACME ROBOTICS PAYROLL",
+      "amount": "3194.04",
+      "account": "Income:Salary",
+      "payee": "Acme Robotics"
+    },
+    {
+      "id": "corpus-0293",
+      "date": "2026-02-26",
+      "description": "MONKEYBRAINS INTERNET",
+      "amount": "-45.00",
+      "account": "Expenses:Utilities:Internet",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0003",
+      "date": "2026-03-01",
+      "description": "POS PURCHASE SAFEWAY 52967",
+      "amount": "-65.33",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0169",
+      "date": "2026-03-01",
+      "description": "SHELL SERVICE STATION 53338",
+      "amount": "-39.35",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Shell"
+    },
+    {
+      "id": "corpus-0060",
+      "date": "2026-03-02",
+      "description": "COSTCO WHSE #3832",
+      "amount": "-301.54",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5300",
+      "payee": "Costco Wholesale"
+    },
+    {
+      "id": "corpus-0063",
+      "date": "2026-03-02",
+      "description": "COSTCO WHSE #94114",
+      "amount": "-146.50",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5300"
+    },
+    {
+      "id": "corpus-0123",
+      "date": "2026-03-03",
+      "description": "DOORDASH*CURRYUP",
+      "amount": "-50.24",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "DoorDash"
+    },
+    {
+      "id": "corpus-0177",
+      "date": "2026-03-04",
+      "description": "COSTCO GAS #78131",
+      "amount": "-50.79",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Costco Gas"
+    },
+    {
+      "id": "corpus-0231",
+      "date": "2026-03-04",
+      "description": "Amazon Prime*YBAQ7",
+      "amount": "-12.47",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968"
+    },
+    {
+      "id": "corpus-0039",
+      "date": "2026-03-05",
+      "description": "TRADER JOE'S #82042 QPS",
+      "amount": "-33.13",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Trader Joe's"
+    },
+    {
+      "id": "corpus-0189",
+      "date": "2026-03-05",
+      "description": "ONLINE XFER TO BAY PROPERTY MGMT",
+      "amount": "-2450.00",
+      "account": "Expenses:Housing:Rent"
+    },
+    {
+      "id": "corpus-0116",
+      "date": "2026-03-06",
+      "description": "CHIPOTLE 79067",
+      "amount": "-17.28",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0040",
+      "date": "2026-03-07",
+      "description": "TRADER JOES #4882",
+      "amount": "-84.04",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0218",
+      "date": "2026-03-08",
+      "description": "NETFLIX.COM 91515",
+      "amount": "-18.47",
+      "account": "Expenses:Subscriptions",
+      "mcc": "4899"
+    },
+    {
+      "id": "corpus-0128",
+      "date": "2026-03-09",
+      "description": "DD *DOORDASH POKEWORLD",
+      "amount": "-43.61",
+      "account": "Expenses:Food:Dining",
+      "payee": "DoorDash"
+    },
+    {
+      "id": "corpus-0184",
+      "date": "2026-03-09",
+      "description": "SAFEWAY FUEL STATION 82409",
+      "amount": "-62.06",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Safeway Fuel"
+    },
+    {
+      "id": "corpus-0201",
+      "date": "2026-03-09",
+      "description": "SFPUC WATER DEPT ONLINE",
+      "amount": "-82.71",
+      "account": "Expenses:Utilities:Water",
+      "mcc": "4900"
+    },
+    {
+      "id": "corpus-0254",
+      "date": "2026-03-10",
+      "description": "WALGREENS STORE 13400",
+      "amount": "-27.52",
+      "account": "Expenses:Health",
+      "mcc": "5912"
+    },
+    {
+      "id": "corpus-0093",
+      "date": "2026-03-11",
+      "description": "SQ *COFFEE 4TH ST",
+      "amount": "-17.04",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0070",
+      "date": "2026-03-13",
+      "description": "GUS'S COMMUNITY MKT",
+      "amount": "-12.55",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0073",
+      "date": "2026-03-13",
+      "description": "GUSS COMMUNITY MARKET",
+      "amount": "-60.75",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0114",
+      "date": "2026-03-13",
+      "description": "CHIPOTLE 95460",
+      "amount": "-26.77",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "Chipotle"
+    },
+    {
+      "id": "corpus-0126",
+      "date": "2026-03-13",
+      "description": "DD *DOORDASH THAIHOUSE",
+      "amount": "-37.85",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0208",
+      "date": "2026-03-13",
+      "description": "SONIC TELECOM LLC AUTOPAY",
+      "amount": "-50.00",
+      "account": "Expenses:Utilities:Internet",
+      "mcc": "4899"
+    },
+    {
+      "id": "corpus-0120",
+      "date": "2026-03-14",
+      "description": "DD *DOORDASH THAIHOUSE",
+      "amount": "-23.52",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "DoorDash"
+    },
+    {
+      "id": "corpus-0079",
+      "date": "2026-03-15",
+      "description": "SQ*COFFEE 4TH ST 3618",
+      "amount": "-9.73",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0017",
+      "date": "2026-03-16",
+      "description": "SAFEWAY #39810 SAN FRANCISCO CA",
+      "amount": "-39.85",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0107",
+      "date": "2026-03-16",
+      "description": "TST* THE HIDEOUT - SF",
+      "amount": "-32.61",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0181",
+      "date": "2026-03-16",
+      "description": "SAFEWAY FUEL #50745",
+      "amount": "-60.69",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Safeway Fuel"
+    },
+    {
+      "id": "corpus-0002",
+      "date": "2026-03-18",
+      "description": "SAFEWAY #77719 SAN FRANCISCO CA",
+      "amount": "-48.66",
+      "account": "Expenses:Food:Groceries",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0221",
+      "date": "2026-03-18",
+      "description": "SPOTIFY USA 37045",
+      "amount": "-14.44",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968"
+    },
+    {
+      "id": "corpus-0034",
+      "date": "2026-03-20",
+      "description": "TRADER JOES #90861",
+      "amount": "-35.71",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0136",
+      "date": "2026-03-20",
+      "description": "STARBUCKS STORE 76264",
+      "amount": "-13.01",
+      "account": "Expenses:Food:Dining",
+      "payee": "Starbucks"
+    },
+    {
+      "id": "corpus-0180",
+      "date": "2026-03-20",
+      "description": "COSTCO GAS #84009",
+      "amount": "-33.16",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0198",
+      "date": "2026-03-20",
+      "description": "PGANDE WEB ONLINE 75965",
+      "amount": "-112.48",
+      "account": "Expenses:Utilities:Electric",
+      "payee": "PG&E"
+    },
+    {
+      "id": "corpus-0212",
+      "date": "2026-03-20",
+      "description": "COMCAST CABLE COMM",
+      "amount": "-88.55",
+      "account": "Expenses:Utilities:Internet",
+      "mcc": "4899",
+      "payee": "Comcast"
+    },
+    {
+      "id": "corpus-0298",
+      "date": "2026-03-20",
+      "description": "BERKELEY BOWL WEST",
+      "amount": "-73.20",
+      "account": "Expenses:Food:Groceries",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0143",
+      "date": "2026-03-21",
+      "description": "SQ *BLUE BOTTLE COFFEE",
+      "amount": "-10.41",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0146",
+      "date": "2026-03-21",
+      "description": "SQ *BLUE BOTTLE COFFEE 71796",
+      "amount": "-21.23",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0270",
+      "date": "2026-03-21",
+      "description": "AMZN MKTP US ZH9A7",
+      "amount": "-127.43",
+      "account": "Expenses:Health"
+    },
+    {
+      "id": "corpus-0100",
+      "date": "2026-03-22",
+      "description": "TST* THE HIDEOUT",
+      "amount": "-39.00",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0202",
+      "date": "2026-03-22",
+      "description": "CITY OF SF WATER BILL",
+      "amount": "-52.95",
+      "account": "Expenses:Utilities:Water",
+      "mcc": "4900"
+    },
+    {
+      "id": "corpus-0234",
+      "date": "2026-03-22",
+      "description": "ADOBE *CREATIVE CLOUD",
+      "amount": "-30.37",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5734",
+      "payee": "Adobe"
+    },
+    {
+      "id": "corpus-0092",
+      "date": "2026-03-23",
+      "description": "SQ *COFFEE 4TH ST 42208",
+      "amount": "-10.06",
+      "account": "Expenses:Food:Dining",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0151",
+      "date": "2026-03-23",
+      "description": "PY*SUSHI RAN MILL VALLEY",
+      "amount": "-101.90",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0153",
+      "date": "2026-03-24",
+      "description": "PY*SUSHI RAN MILL VALLEY",
+      "amount": "-102.59",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0290",
+      "date": "2026-03-24",
+      "description": "76 - EL CERRITO 4432",
+      "amount": "-44.10",
+      "account": "Expenses:Transport:Gas",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0043",
+      "date": "2026-03-25",
+      "description": "TRADER JOES #53311",
+      "amount": "-97.65",
+      "account": "Expenses:Food:Groceries",
+      "payee": "Trader Joe's"
+    },
+    {
+      "id": "corpus-0056",
+      "date": "2026-03-25",
+      "description": "WHOLE FOODS MKT #56961",
+      "amount": "-17.00",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Whole Foods Market"
+    },
+    {
+      "id": "corpus-0168",
+      "date": "2026-03-26",
+      "description": "SHELL OIL 19674",
+      "amount": "-40.35",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0048",
+      "date": "2026-03-27",
+      "description": "WHOLE FOODS MKT #67401",
+      "amount": "-66.29",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Whole Foods Market"
+    },
+    {
+      "id": "corpus-0096",
+      "date": "2026-03-27",
+      "description": "TST* THE HIDEOUT",
+      "amount": "-79.72",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "The Hideout"
+    },
+    {
+      "id": "corpus-0228",
+      "date": "2026-03-28",
+      "description": "AMZN Digital*854SE",
+      "amount": "-13.61",
+      "account": "Expenses:Subscriptions"
+    },
+    {
+      "id": "corpus-0185",
+      "date": "2026-03-29",
+      "description": "ACH DEBIT - RENTPAYMENT.COM",
+      "amount": "-2450.00",
+      "account": "Expenses:Housing:Rent",
+      "payee": "RentPayment"
+    },
+    {
+      "id": "corpus-0209",
+      "date": "2026-03-29",
+      "description": "SONIC.NET INC MONTHLY",
+      "amount": "-50.00",
+      "account": "Expenses:Utilities:Internet",
+      "mcc": "4899"
+    },
+    {
+      "id": "corpus-0235",
+      "date": "2026-03-30",
+      "description": "ADOBE INC LGNG0",
+      "amount": "-45.12",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5734"
+    },
+    {
+      "id": "corpus-0284",
+      "date": "2026-04-01",
+      "description": "DIR DEP ACME ROBOTIC 3777 PPD ID",
+      "amount": "3168.12",
+      "account": "Income:Salary",
+      "payee": "Acme Robotics"
+    },
+    {
+      "id": "corpus-0261",
+      "date": "2026-04-02",
+      "description": "ONE MEDICAL MEMBERSHIP",
+      "amount": "-83.78",
+      "account": "Expenses:Health",
+      "mcc": "8011"
+    },
+    {
+      "id": "corpus-0295",
+      "date": "2026-04-02",
+      "description": "SUTTER HEALTH PALO ALTO",
+      "amount": "-135.00",
+      "account": "Expenses:Health",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0214",
+      "date": "2026-04-03",
+      "description": "COMCAST CABLE COMM",
+      "amount": "-93.33",
+      "account": "Expenses:Utilities:Internet",
+      "payee": "Comcast"
+    },
+    {
+      "id": "corpus-0288",
+      "date": "2026-04-03",
+      "description": "IN-N-OUT BURGER #123",
+      "amount": "-12.40",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0029",
+      "date": "2026-04-05",
+      "description": "TRADER JOE S 51947",
+      "amount": "-104.01",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Trader Joe's"
+    },
+    {
+      "id": "corpus-0249",
+      "date": "2026-04-07",
+      "description": "WALGREENS #83148",
+      "amount": "-6.24",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5912",
+      "payee": "Walgreens"
+    },
+    {
+      "id": "corpus-0271",
+      "date": "2026-04-07",
+      "description": "AMZN Mktp US*XZ697",
+      "amount": "-49.07",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0216",
+      "date": "2026-04-08",
+      "description": "NETFLIX.COM 72419",
+      "amount": "-18.06",
+      "account": "Expenses:Subscriptions",
+      "mcc": "4899"
+    },
+    {
+      "id": "corpus-0049",
+      "date": "2026-04-09",
+      "description": "WHOLEFDS SFO 9030",
+      "amount": "-58.13",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Whole Foods Market"
+    },
+    {
+      "id": "corpus-0087",
+      "date": "2026-04-09",
+      "description": "SQ *COFFEE 4TH ST",
+      "amount": "-15.24",
+      "account": "Expenses:Food:Dining",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0224",
+      "date": "2026-04-09",
+      "description": "SPOTIFY USA",
+      "amount": "-13.17",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968",
+      "payee": "Spotify"
+    },
+    {
+      "id": "corpus-0006",
+      "date": "2026-04-10",
+      "description": "POS PURCHASE SAFEWAY 63692",
+      "amount": "-108.27",
+      "account": "Expenses:Food:Groceries",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0158",
+      "date": "2026-04-10",
+      "description": "CHEVRON 82707",
+      "amount": "-57.98",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0112",
+      "date": "2026-04-11",
+      "description": "CHIPOTLE 25007",
+      "amount": "-11.33",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0127",
+      "date": "2026-04-11",
+      "description": "DOORDASH*SWEETGREEN",
+      "amount": "-51.98",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0186",
+      "date": "2026-04-11",
+      "description": "ACH DEBIT RENTPAYMENT COM WEB",
+      "amount": "-2450.00",
+      "account": "Expenses:Housing:Rent",
+      "payee": "RentPayment"
+    },
+    {
+      "id": "corpus-0205",
+      "date": "2026-04-12",
+      "description": "CITY OF SF WATER BILL",
+      "amount": "-44.71",
+      "account": "Expenses:Utilities:Water",
+      "mcc": "4900",
+      "payee": "SFPUC"
+    },
+    {
+      "id": "corpus-0232",
+      "date": "2026-04-12",
+      "description": "ADOBE *CREATIVE CLOUD",
+      "amount": "-24.99",
+      "account": "Expenses:Subscriptions"
+    },
+    {
+      "id": "corpus-0075",
+      "date": "2026-04-13",
+      "description": "SQ *COFFEE 4TH ST",
+      "amount": "-8.38",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0142",
+      "date": "2026-04-13",
+      "description": "SQ *BLUE BOTTLE COFFEE 15895",
+      "amount": "-12.24",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "Blue Bottle Coffee"
+    },
+    {
+      "id": "corpus-0172",
+      "date": "2026-04-13",
+      "description": "ARCO #99647 PAYMENT",
+      "amount": "-43.23",
+      "account": "Expenses:Transport:Gas"
+    },
+    {
+      "id": "corpus-0245",
+      "date": "2026-04-13",
+      "description": "WALGREENS #21564",
+      "amount": "-26.25",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5912",
+      "payee": "Walgreens"
+    },
+    {
+      "id": "corpus-0247",
+      "date": "2026-04-13",
+      "description": "WALGREENS #65985",
+      "amount": "-46.42",
+      "account": "Expenses:Health",
+      "mcc": "5912"
+    },
+    {
+      "id": "corpus-0152",
+      "date": "2026-04-14",
+      "description": "PY *SUSHI RAN",
+      "amount": "-54.14",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0024",
+      "date": "2026-04-17",
+      "description": "POS PURCHASE SAFEWAY 49894",
+      "amount": "-34.96",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0052",
+      "date": "2026-04-17",
+      "description": "WHOLE FOODS MKT #73926",
+      "amount": "-69.49",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0134",
+      "date": "2026-04-17",
+      "description": "STARBUCKS STORE 19119",
+      "amount": "-7.52",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0103",
+      "date": "2026-04-21",
+      "description": "TST* THE HIDEOUT - SF",
+      "amount": "-61.07",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0264",
+      "date": "2026-04-21",
+      "description": "ONEMEDICAL.COM 26808",
+      "amount": "-71.11",
+      "account": "Expenses:Health"
+    },
+    {
+      "id": "corpus-0220",
+      "date": "2026-04-22",
+      "description": "NETFLIX.COM 16554",
+      "amount": "-18.19",
+      "account": "Expenses:Subscriptions",
+      "mcc": "4899",
+      "payee": "Netflix"
+    },
+    {
+      "id": "corpus-0145",
+      "date": "2026-04-24",
+      "description": "SQ *BLUE BOTTLE COFFEE",
+      "amount": "-11.35",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0170",
+      "date": "2026-04-25",
+      "description": "SHELL OIL 35699",
+      "amount": "-47.52",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Shell"
+    },
+    {
+      "id": "corpus-0274",
+      "date": "2026-04-25",
+      "description": "ACME ROBOTICS PAYROLL PPD",
+      "amount": "3160.19",
+      "account": "Income:Salary"
+    },
+    {
+      "id": "corpus-0286",
+      "date": "2026-04-25",
+      "description": "TST* KOJI SF",
+      "amount": "-58.00",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0253",
+      "date": "2026-04-26",
+      "description": "WALGREENS #83783",
+      "amount": "-20.73",
+      "account": "Expenses:Health",
+      "mcc": "5912"
+    },
+    {
+      "id": "corpus-0160",
+      "date": "2026-04-27",
+      "description": "CHEVRON 59706",
+      "amount": "-67.87",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0292",
+      "date": "2026-04-27",
+      "description": "EAST BAY MUD AUTOPAY",
+      "amount": "-62.30",
+      "account": "Expenses:Utilities:Water",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0044",
+      "date": "2026-04-28",
+      "description": "TRADER JOE S 7032",
+      "amount": "-105.68",
+      "account": "Expenses:Food:Groceries",
+      "payee": "Trader Joe's"
+    },
+    {
+      "id": "corpus-0110",
+      "date": "2026-04-28",
+      "description": "CHIPOTLE 1860",
+      "amount": "-26.13",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "Chipotle"
+    },
+    {
+      "id": "corpus-0291",
+      "date": "2026-04-28",
+      "description": "VALERO 2201 SAN PABLO",
+      "amount": "-38.75",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0071",
+      "date": "2026-04-30",
+      "description": "GUSS COMMUNITY MARKET",
+      "amount": "-12.64",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0069",
+      "date": "2026-05-01",
+      "description": "BI-RITE MARKET 18TH ST",
+      "amount": "-20.24",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0091",
+      "date": "2026-05-01",
+      "description": "SQ*COFFEE 4TH ST 54143",
+      "amount": "-13.64",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0099",
+      "date": "2026-05-01",
+      "description": "TST* THE HIDEOUT - SF",
+      "amount": "-43.56",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0187",
+      "date": "2026-05-01",
+      "description": "ACH DEBIT - RENTPAYMENT.COM",
+      "amount": "-2450.00",
+      "account": "Expenses:Housing:Rent"
+    },
+    {
+      "id": "corpus-0022",
+      "date": "2026-05-02",
+      "description": "POS DEBIT SAFEWAY #9231",
+      "amount": "-44.21",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0028",
+      "date": "2026-05-02",
+      "description": "TRADER JOES #31904",
+      "amount": "-56.45",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0165",
+      "date": "2026-05-03",
+      "description": "SHELL SERVICE STATION 52272",
+      "amount": "-45.14",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Shell"
+    },
+    {
+      "id": "corpus-0226",
+      "date": "2026-05-03",
+      "description": "SPOTIFY USA",
+      "amount": "-19.73",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968"
+    },
+    {
+      "id": "corpus-0204",
+      "date": "2026-05-05",
+      "description": "SFPUC WATER DEPT ONLINE",
+      "amount": "-52.87",
+      "account": "Expenses:Utilities:Water",
+      "mcc": "4900"
+    },
+    {
+      "id": "corpus-0242",
+      "date": "2026-05-05",
+      "description": "APPLE.COM/BILL 33018",
+      "amount": "-7.25",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968"
+    },
+    {
+      "id": "corpus-0255",
+      "date": "2026-05-05",
+      "description": "CVS/PHARMACY #12222",
+      "amount": "-24.56",
+      "account": "Expenses:Health",
+      "mcc": "5912",
+      "payee": "CVS Pharmacy"
+    },
+    {
+      "id": "corpus-0176",
+      "date": "2026-05-06",
+      "description": "ARCO #90069 PAYMENT",
+      "amount": "-61.00",
+      "account": "Expenses:Transport:Gas"
+    },
+    {
+      "id": "corpus-0045",
+      "date": "2026-05-07",
+      "description": "WHOLEFDS SFO 92352",
+      "amount": "-47.64",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Whole Foods Market"
+    },
+    {
+      "id": "corpus-0195",
+      "date": "2026-05-08",
+      "description": "PGANDE WEB ONLINE 88000",
+      "amount": "-202.79",
+      "account": "Expenses:Utilities:Electric",
+      "mcc": "4900"
+    },
+    {
+      "id": "corpus-0213",
+      "date": "2026-05-08",
+      "description": "COMCAST CABLE COMM 41549",
+      "amount": "-79.65",
+      "account": "Expenses:Utilities:Internet",
+      "mcc": "4899",
+      "payee": "Comcast"
+    },
+    {
+      "id": "corpus-0280",
+      "date": "2026-05-08",
+      "description": "ACME ROBOTICS PAYROLL PPD",
+      "amount": "3132.18",
+      "account": "Income:Salary"
+    },
+    {
+      "id": "corpus-0033",
+      "date": "2026-05-09",
+      "description": "TRADER JOE'S #14644 QPS",
+      "amount": "-36.49",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0164",
+      "date": "2026-05-09",
+      "description": "SHELL OIL 92988",
+      "amount": "-61.95",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0166",
+      "date": "2026-05-09",
+      "description": "SHELL OIL 16638",
+      "amount": "-42.65",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0179",
+      "date": "2026-05-10",
+      "description": "COSTCO GAS #58761",
+      "amount": "-45.14",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Costco Gas"
+    },
+    {
+      "id": "corpus-0296",
+      "date": "2026-05-11",
+      "description": "HULU 8776783",
+      "amount": "-17.99",
+      "account": "Expenses:Subscriptions",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0057",
+      "date": "2026-05-12",
+      "description": "COSTCO WHSE #24353",
+      "amount": "-305.93",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5300"
+    },
+    {
+      "id": "corpus-0090",
+      "date": "2026-05-12",
+      "description": "SQ *COFFEE 4TH ST",
+      "amount": "-6.82",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0267",
+      "date": "2026-05-12",
+      "description": "AMZN Mktp US*VEHDR",
+      "amount": "-108.75",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0175",
+      "date": "2026-05-13",
+      "description": "ARCO #94935 PAYMENT",
+      "amount": "-48.77",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0013",
+      "date": "2026-05-14",
+      "description": "POS DEBIT SAFEWAY #5747",
+      "amount": "-101.29",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0200",
+      "date": "2026-05-14",
+      "description": "ACH DEBIT - PG&E WEB ONLINE",
+      "amount": "-98.63",
+      "account": "Expenses:Utilities:Electric",
+      "mcc": "4900",
+      "payee": "PG&E"
+    },
+    {
+      "id": "corpus-0105",
+      "date": "2026-05-15",
+      "description": "TST* THE HIDEOUT - SF",
+      "amount": "-60.79",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0109",
+      "date": "2026-05-15",
+      "description": "CHIPOTLE ONLINE 34228",
+      "amount": "-20.26",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "Chipotle"
+    },
+    {
+      "id": "corpus-0259",
+      "date": "2026-05-15",
+      "description": "CVS/PHARMACY #23827",
+      "amount": "-46.22",
+      "account": "Expenses:Health",
+      "mcc": "5912"
+    },
+    {
+      "id": "corpus-0097",
+      "date": "2026-05-16",
+      "description": "TST* THE HIDEOUT - SF",
+      "amount": "-24.37",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "The Hideout"
+    },
+    {
+      "id": "corpus-0192",
+      "date": "2026-05-16",
+      "description": "CHECK #28604",
+      "amount": "-2450.00",
+      "account": "Expenses:Housing:Rent"
+    },
+    {
+      "id": "corpus-0257",
+      "date": "2026-05-18",
+      "description": "CVS/PHARMACY #13012",
+      "amount": "-56.71",
+      "account": "Expenses:Health",
+      "mcc": "5912",
+      "payee": "CVS Pharmacy"
+    },
+    {
+      "id": "corpus-0019",
+      "date": "2026-05-19",
+      "description": "POS DEBIT SAFEWAY #96582",
+      "amount": "-62.02",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Safeway"
+    },
+    {
+      "id": "corpus-0062",
+      "date": "2026-05-19",
+      "description": "COSTCO WHSE #31758",
+      "amount": "-137.59",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5300",
+      "payee": "Costco Wholesale"
+    },
+    {
+      "id": "corpus-0199",
+      "date": "2026-05-19",
+      "description": "PG&E ONLINE PMT",
+      "amount": "-114.72",
+      "account": "Expenses:Utilities:Electric",
+      "mcc": "4900"
+    },
+    {
+      "id": "corpus-0240",
+      "date": "2026-05-19",
+      "description": "APPLE.COM/BILL 99834",
+      "amount": "-9.24",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968"
+    },
+    {
+      "id": "corpus-0041",
+      "date": "2026-05-21",
+      "description": "TRADER JOE S 71906",
+      "amount": "-63.39",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0131",
+      "date": "2026-05-21",
+      "description": "STARBUCKS #97005",
+      "amount": "-4.98",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "Starbucks"
+    },
+    {
+      "id": "corpus-0053",
+      "date": "2026-05-22",
+      "description": "WHOLEFDS SFO 84514",
+      "amount": "-86.03",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0217",
+      "date": "2026-05-22",
+      "description": "NETFLIX.COM 99919",
+      "amount": "-18.68",
+      "account": "Expenses:Subscriptions"
+    },
+    {
+      "id": "corpus-0050",
+      "date": "2026-05-23",
+      "description": "WHOLE FOODS MKT #8800",
+      "amount": "-78.48",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411",
+      "payee": "Whole Foods Market"
+    },
+    {
+      "id": "corpus-0206",
+      "date": "2026-05-23",
+      "description": "SFPUC UTILITY PMT 40233",
+      "amount": "-48.15",
+      "account": "Expenses:Utilities:Water",
+      "mcc": "4900"
+    },
+    {
+      "id": "corpus-0222",
+      "date": "2026-05-24",
+      "description": "SPOTIFY USA",
+      "amount": "-16.36",
+      "account": "Expenses:Subscriptions"
+    },
+    {
+      "id": "corpus-0183",
+      "date": "2026-05-25",
+      "description": "SAFEWAY FUEL #17199",
+      "amount": "-40.38",
+      "account": "Expenses:Transport:Gas"
+    },
+    {
+      "id": "corpus-0191",
+      "date": "2026-05-26",
+      "description": "CHECK #64466",
+      "amount": "-2450.00",
+      "account": "Expenses:Housing:Rent"
+    },
+    {
+      "id": "corpus-0154",
+      "date": "2026-05-27",
+      "description": "CHEVRON 79119",
+      "amount": "-48.58",
+      "account": "Expenses:Transport:Gas"
+    },
+    {
+      "id": "corpus-0035",
+      "date": "2026-05-29",
+      "description": "TRADER JOE S 47019",
+      "amount": "-76.00",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0064",
+      "date": "2026-05-29",
+      "description": "COSTCO WHSE #37375",
+      "amount": "-278.98",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5300"
+    },
+    {
+      "id": "corpus-0095",
+      "date": "2026-05-29",
+      "description": "SQ *COFFEE 4TH ST 36370",
+      "amount": "-6.17",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0294",
+      "date": "2026-05-29",
+      "description": "KAISER PERMANENTE OFC VISIT",
+      "amount": "-40.00",
+      "account": "Expenses:Health",
+      "mcc": "8011",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0119",
+      "date": "2026-05-30",
+      "description": "DOORDASH*WENDYS",
+      "amount": "-51.04",
+      "account": "Expenses:Food:Dining",
+      "payee": "DoorDash"
+    },
+    {
+      "id": "corpus-0121",
+      "date": "2026-05-30",
+      "description": "DOORDASH*SWEETGREEN",
+      "amount": "-19.71",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0020",
+      "date": "2026-05-31",
+      "description": "SAFEWAY #15912 SAN FRANCISCO CA",
+      "amount": "-76.23",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0054",
+      "date": "2026-05-31",
+      "description": "WHOLE FOODS MKT #47569",
+      "amount": "-94.11",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0051",
+      "date": "2026-06-01",
+      "description": "WHOLEFDS SFO 17846",
+      "amount": "-19.32",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0277",
+      "date": "2026-06-01",
+      "description": "ACME ROBOTICS PAYROLL PPD",
+      "amount": "3150.70",
+      "account": "Income:Salary"
+    },
+    {
+      "id": "corpus-0036",
+      "date": "2026-06-02",
+      "description": "TRADER JOE'S #39761 QPS",
+      "amount": "-59.87",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0250",
+      "date": "2026-06-03",
+      "description": "WALGREENS STORE 90345",
+      "amount": "-70.63",
+      "account": "Expenses:Health",
+      "mcc": "5912",
+      "payee": "Walgreens"
+    },
+    {
+      "id": "corpus-0139",
+      "date": "2026-06-04",
+      "description": "STARBUCKS #13270",
+      "amount": "-8.38",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0037",
+      "date": "2026-06-05",
+      "description": "TRADER JOES #17145",
+      "amount": "-94.01",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0089",
+      "date": "2026-06-05",
+      "description": "SQ *COFFEE 4TH ST 52182",
+      "amount": "-3.89",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0009",
+      "date": "2026-06-06",
+      "description": "POS PURCHASE SAFEWAY 30014",
+      "amount": "-103.93",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0059",
+      "date": "2026-06-06",
+      "description": "COSTCO WHSE #30841",
+      "amount": "-274.15",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5300"
+    },
+    {
+      "id": "corpus-0148",
+      "date": "2026-06-07",
+      "description": "PY *SUSHI RAN",
+      "amount": "-160.65",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0263",
+      "date": "2026-06-07",
+      "description": "ONE MEDICAL MEMBERSHIP",
+      "amount": "-182.12",
+      "account": "Expenses:Health"
+    },
+    {
+      "id": "corpus-0125",
+      "date": "2026-06-08",
+      "description": "DOORDASH*WENDYS",
+      "amount": "-25.05",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0162",
+      "date": "2026-06-08",
+      "description": "CHEVRON 99334",
+      "amount": "-46.84",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Chevron"
+    },
+    {
+      "id": "corpus-0279",
+      "date": "2026-06-08",
+      "description": "DIRECT DEP - ACME ROBOTICS PAYROLL",
+      "amount": "3140.76",
+      "account": "Income:Salary"
+    },
+    {
+      "id": "corpus-0082",
+      "date": "2026-06-09",
+      "description": "SQ*COFFEE 4TH ST 2285",
+      "amount": "-16.26",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0140",
+      "date": "2026-06-09",
+      "description": "SQ *BLUE BOTTLE COFFEE 86923",
+      "amount": "-13.48",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0133",
+      "date": "2026-06-11",
+      "description": "STARBUCKS #44609",
+      "amount": "-18.40",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0289",
+      "date": "2026-06-11",
+      "description": "TST* NOPALITO 9TH AVE",
+      "amount": "-71.50",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0124",
+      "date": "2026-06-12",
+      "description": "DD *DOORDASH BURGERKING",
+      "amount": "-22.07",
+      "account": "Expenses:Food:Dining"
+    },
+    {
+      "id": "corpus-0138",
+      "date": "2026-06-12",
+      "description": "STARBUCKS STORE 53599",
+      "amount": "-8.30",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0297",
+      "date": "2026-06-12",
+      "description": "PARAMOUNT+ 8779021",
+      "amount": "-11.99",
+      "account": "Expenses:Subscriptions",
+      "holdout": true
+    },
+    {
+      "id": "corpus-0005",
+      "date": "2026-06-13",
+      "description": "SAFEWAY #76665 SAN FRANCISCO CA",
+      "amount": "-61.95",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0066",
+      "date": "2026-06-14",
+      "description": "BI-RITE MARKET 18TH ST",
+      "amount": "-21.64",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0078",
+      "date": "2026-06-14",
+      "description": "SQ *COFFEE 4TH ST",
+      "amount": "-5.32",
+      "account": "Expenses:Food:Dining",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0246",
+      "date": "2026-06-14",
+      "description": "WALGREENS STORE 40386",
+      "amount": "-45.96",
+      "account": "Expenses:Health",
+      "mcc": "5912",
+      "payee": "Walgreens"
+    },
+    {
+      "id": "corpus-0147",
+      "date": "2026-06-15",
+      "description": "SQ *BLUE BOTTLE COFFEE",
+      "amount": "-22.33",
+      "account": "Expenses:Food:Dining",
+      "payee": "Blue Bottle Coffee"
+    },
+    {
+      "id": "corpus-0016",
+      "date": "2026-06-16",
+      "description": "POS DEBIT SAFEWAY #75241",
+      "amount": "-41.90",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0157",
+      "date": "2026-06-16",
+      "description": "CHEVRON 0034543",
+      "amount": "-44.79",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541",
+      "payee": "Chevron"
+    },
+    {
+      "id": "corpus-0182",
+      "date": "2026-06-16",
+      "description": "SAFEWAY FUEL STATION 72515",
+      "amount": "-60.44",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0251",
+      "date": "2026-06-17",
+      "description": "WALGREENS #28194",
+      "amount": "-79.29",
+      "account": "Expenses:Health",
+      "mcc": "5912"
+    },
+    {
+      "id": "corpus-0275",
+      "date": "2026-06-17",
+      "description": "DIR DEP ACME ROBOTIC 56064 PPD ID",
+      "amount": "3184.89",
+      "account": "Income:Salary",
+      "payee": "Acme Robotics"
+    },
+    {
+      "id": "corpus-0038",
+      "date": "2026-06-18",
+      "description": "TRADER JOE S 73406",
+      "amount": "-75.71",
+      "account": "Expenses:Food:Groceries",
+      "payee": "Trader Joe's"
+    },
+    {
+      "id": "corpus-0027",
+      "date": "2026-06-19",
+      "description": "TRADER JOE'S #52590 QPS",
+      "amount": "-50.64",
+      "account": "Expenses:Food:Groceries",
+      "payee": "Trader Joe's"
+    },
+    {
+      "id": "corpus-0080",
+      "date": "2026-06-19",
+      "description": "SQ *COFFEE 4TH ST 76896",
+      "amount": "-13.58",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812"
+    },
+    {
+      "id": "corpus-0223",
+      "date": "2026-06-19",
+      "description": "SPOTIFY USA 56746",
+      "amount": "-17.63",
+      "account": "Expenses:Subscriptions"
+    },
+    {
+      "id": "corpus-0061",
+      "date": "2026-06-20",
+      "description": "COSTCO WHSE #42836",
+      "amount": "-304.40",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5300",
+      "payee": "Costco Wholesale"
+    },
+    {
+      "id": "corpus-0081",
+      "date": "2026-06-20",
+      "description": "SQ *COFFEE 4TH ST",
+      "amount": "-5.34",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0252",
+      "date": "2026-06-20",
+      "description": "WALGREENS STORE 88298",
+      "amount": "-10.70",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5912",
+      "payee": "Walgreens"
+    },
+    {
+      "id": "corpus-0072",
+      "date": "2026-06-21",
+      "description": "GUS'S COMMUNITY MKT",
+      "amount": "-42.74",
+      "account": "Expenses:Food:Groceries"
+    },
+    {
+      "id": "corpus-0108",
+      "date": "2026-06-21",
+      "description": "CHIPOTLE 93556",
+      "amount": "-9.70",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814",
+      "payee": "Chipotle"
+    },
+    {
+      "id": "corpus-0269",
+      "date": "2026-06-21",
+      "description": "AMZN Mktp US*TA6NQ",
+      "amount": "-106.12",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5942"
+    },
+    {
+      "id": "corpus-0273",
+      "date": "2026-06-21",
+      "description": "DIRECT DEP - ACME ROBOTICS PAYROLL",
+      "amount": "3162.82",
+      "account": "Income:Salary"
+    },
+    {
+      "id": "corpus-0025",
+      "date": "2026-06-22",
+      "description": "POS DEBIT SAFEWAY #30881",
+      "amount": "-101.54",
+      "account": "Expenses:Food:Groceries",
+      "mcc": "5411"
+    },
+    {
+      "id": "corpus-0173",
+      "date": "2026-06-23",
+      "description": "ARCO #67451 PAYMENT",
+      "amount": "-46.99",
+      "account": "Expenses:Transport:Gas",
+      "mcc": "5541"
+    },
+    {
+      "id": "corpus-0215",
+      "date": "2026-06-23",
+      "description": "NETFLIX.COM 22817",
+      "amount": "-21.35",
+      "account": "Expenses:Subscriptions",
+      "mcc": "4899",
+      "payee": "Netflix"
+    },
+    {
+      "id": "corpus-0094",
+      "date": "2026-06-24",
+      "description": "SQ*COFFEE 4TH ST 54328",
+      "amount": "-9.87",
+      "account": "Expenses:Food:Dining",
+      "payee": "Coffee 4th St"
+    },
+    {
+      "id": "corpus-0098",
+      "date": "2026-06-24",
+      "description": "TST* THE HIDEOUT",
+      "amount": "-22.60",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5812",
+      "payee": "The Hideout"
+    },
+    {
+      "id": "corpus-0117",
+      "date": "2026-06-25",
+      "description": "CHIPOTLE ONLINE 38925",
+      "amount": "-16.94",
+      "account": "Expenses:Food:Dining",
+      "mcc": "5814"
+    },
+    {
+      "id": "corpus-0248",
+      "date": "2026-06-25",
+      "description": "WALGREENS STORE 54572",
+      "amount": "-58.30",
+      "account": "Expenses:Health",
+      "mcc": "5912"
+    },
+    {
+      "id": "corpus-0241",
+      "date": "2026-06-26",
+      "description": "APPLE.COM/BILL 38609",
+      "amount": "-3.05",
+      "account": "Expenses:Subscriptions",
+      "mcc": "5968"
+    },
+    {
+      "id": "corpus-0278",
+      "date": "2026-06-26",
+      "description": "DIR DEP ACME ROBOTIC 97494 PPD ID",
+      "amount": "3125.96",
+      "account": "Income:Salary",
+      "payee": "Acme Robotics"
+    }
+  ]
+}
