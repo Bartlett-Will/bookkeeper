@@ -9,6 +9,11 @@ future chat tools is a design requirement (PLAN.md §9), not an afterthought.
     sync     -> bookkeeper.ingest.sync:run_sync(since=None, demo=False) -> SyncResult
     verify   -> bookkeeper.envelope.verify:run_verify() -> VerifyResult
     envelopes-> bookkeeper.envelope.compute:envelope_report(asof=None) -> EnvelopeReport
+    categorize-> bookkeeper.categorize.apply:run_categorize(apply=False, limit=None,
+                     use_llm=True) -> CategorizeResult
+    review   -> bookkeeper.categorize.review:review_queue(limit=None) -> ReviewQueue
+    eval     -> bookkeeper.categorize.evaluate:run_eval(corpus=None, use_llm=False)
+                     -> EvalReport
     serve    -> bookkeeper.api:serve(host, port)
 
 Each result object must expose `.ok: bool` and `.render() -> str` so this dispatcher
@@ -54,6 +59,30 @@ def _cmd_envelopes(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_categorize(args: argparse.Namespace) -> int:
+    from bookkeeper.categorize.apply import run_categorize
+
+    result = run_categorize(apply=args.apply, limit=args.limit, use_llm=not args.no_llm)
+    print(result.render())
+    return 0 if result.ok else 1
+
+
+def _cmd_review(args: argparse.Namespace) -> int:
+    from bookkeeper.categorize.review import review_queue
+
+    queue = review_queue(limit=args.limit)
+    print(queue.render())
+    return 0 if queue.ok else 1
+
+
+def _cmd_eval(args: argparse.Namespace) -> int:
+    from bookkeeper.categorize.evaluate import run_eval
+
+    report = run_eval(corpus=args.corpus, use_llm=args.llm)
+    print(report.render())
+    return 0 if report.ok else 1
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from bookkeeper.api import serve
 
@@ -80,6 +109,35 @@ def build_parser() -> argparse.ArgumentParser:
     e = sub.add_parser("envelopes", help="Show envelope balances")
     e.add_argument("--asof", default=None, help="ISO date; defaults to today")
     e.set_defaults(func=_cmd_envelopes)
+
+    # Categorization (PLAN.md §5.4). `categorize` defaults to a dry run:
+    # writing to the ledger is opt-in via --apply, because review-everything
+    # is the shipped default (decision 5) and an unattended reclassification
+    # of every transaction is exactly the "silently corrupts the ledger" risk.
+    cat = sub.add_parser("categorize", help="Predict accounts for uncategorized transactions")
+    cat.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write predictions into the ledger (default: dry run, print only)",
+    )
+    cat.add_argument("--limit", type=int, default=None, help="Only process the first N")
+    cat.add_argument(
+        "--no-llm", action="store_true", help="Deterministic + statistical tiers only"
+    )
+    cat.set_defaults(func=_cmd_categorize)
+
+    rv = sub.add_parser("review", help="Show transactions awaiting human categorization")
+    rv.add_argument("--limit", type=int, default=None, help="Show at most N entries")
+    rv.set_defaults(func=_cmd_review)
+
+    ev = sub.add_parser("eval", help="Measure per-tier categorization accuracy (§5.5)")
+    ev.add_argument("--corpus", default=None, help="Path to a labeled corpus JSON")
+    ev.add_argument(
+        "--llm",
+        action="store_true",
+        help="Include the LLM tier (slow; requires Ollama). Off by default so CI stays hermetic.",
+    )
+    ev.set_defaults(func=_cmd_eval)
 
     r = sub.add_parser("serve", help="Run the FastAPI sidecar")
     r.add_argument("--host", default="127.0.0.1")
