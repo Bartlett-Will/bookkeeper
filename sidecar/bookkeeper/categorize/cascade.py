@@ -23,6 +23,7 @@ from bookkeeper.categorize.models import (
     Categorizer,
     LedgerContext,
     Prediction,
+    Tier,
 )
 from bookkeeper.categorize.rules import RuleCategorizer
 
@@ -40,9 +41,21 @@ class Cascade:
     partial/test cascade with only the tiers it cares about.
     """
 
-    def __init__(self, categorizers: Sequence[Categorizer]) -> None:
+    def __init__(
+        self,
+        categorizers: Sequence[Categorizer],
+        unavailable: Sequence[tuple[Tier, str]] = (),
+    ) -> None:
         by_tier = {c.tier: c for c in categorizers}
         self._categorizers = tuple(by_tier[tier] for tier in CASCADE_ORDER if tier in by_tier)
+        # Which optional tiers from CASCADE_ORDER aren't present, and why --
+        # `unavailable` is additive/backward-compatible (defaults to empty),
+        # not part of the tier lookup itself. This exists so a caller (the
+        # §5.5 eval harness in particular) can tell "not measured because
+        # nobody built this tier for the report" apart from "not measured
+        # because it also isn't running in production" -- a plain absence
+        # from `.tiers` can't distinguish those on its own.
+        self.unavailable = tuple(unavailable)
 
     @property
     def tiers(self) -> tuple[Categorizer, ...]:
@@ -68,27 +81,37 @@ def build_default_cascade(use_llm: bool = True) -> Cascade:
 
     `use_llm=False` skips the LLM tier outright (the `categorize --no-llm`
     / `eval` CLI flags, §5.5's CI requirement to stay hermetic) without
-    needing Ollama to be absent for that to work.
+    needing Ollama to be absent for that to work. Either way, a skipped
+    tier is recorded on the returned `Cascade.unavailable` with a reason --
+    degrading silently would let a reader of a per-tier eval report
+    mistake "nobody wired this tier up" for "measured at zero coverage".
     """
     categorizers: list[Categorizer] = [
         MemoryCategorizer(),
         RuleCategorizer(),
         MccCategorizer(),
     ]
+    unavailable: list[tuple[Tier, str]] = []
 
     try:
         from bookkeeper.categorize.statistical import StatisticalCategorizer
 
         categorizers.append(StatisticalCategorizer())
-    except Exception:  # noqa: BLE001 - optional tier, degrade don't crash
-        logger.info("statistical categorizer unavailable; continuing without it")
+    except Exception as exc:  # noqa: BLE001 - optional tier, degrade don't crash
+        reason = f"{type(exc).__name__}: {exc}"
+        logger.warning("statistical categorizer unavailable: %s", reason)
+        unavailable.append((Tier.STATISTICAL, reason))
 
     if use_llm:
         try:
             from bookkeeper.categorize.llm import LlmCategorizer
 
             categorizers.append(LlmCategorizer())
-        except Exception:  # noqa: BLE001 - optional tier, degrade don't crash
-            logger.info("LLM categorizer unavailable; continuing without it")
+        except Exception as exc:  # noqa: BLE001 - optional tier, degrade don't crash
+            reason = f"{type(exc).__name__}: {exc}"
+            logger.warning("LLM categorizer unavailable: %s", reason)
+            unavailable.append((Tier.LLM, reason))
+    else:
+        unavailable.append((Tier.LLM, "use_llm=False"))
 
-    return Cascade(categorizers)
+    return Cascade(categorizers, unavailable=unavailable)

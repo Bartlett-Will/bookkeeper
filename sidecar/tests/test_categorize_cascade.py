@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -121,3 +122,49 @@ def test_tiers_property_exposes_individual_categorizers_in_cascade_order():
     cascade = Cascade([rule, memory])
 
     assert [c.tier for c in cascade.tiers] == [Tier.MEMORY, Tier.RULE]
+
+
+def test_cascade_unavailable_defaults_to_empty():
+    cascade = Cascade([])
+    assert cascade.unavailable == ()
+
+
+def test_cascade_unavailable_is_stored_verbatim():
+    cascade = Cascade([], unavailable=[(Tier.LLM, "no ollama")])
+    assert cascade.unavailable == ((Tier.LLM, "no ollama"),)
+
+
+def test_build_default_cascade_records_use_llm_false_as_unavailable():
+    cascade = build_default_cascade(use_llm=False)
+    assert Tier.LLM not in {t.tier for t in cascade.tiers}
+    reasons = dict(cascade.unavailable)
+    assert reasons.get(Tier.LLM) == "use_llm=False"
+
+
+def test_build_default_cascade_records_broken_optional_tier_as_unavailable(monkeypatch):
+    # Simulate the statistical tier's module failing to import (e.g. it
+    # genuinely doesn't exist yet, or raises on construction) -- setting a
+    # sys.modules entry to None is the standard way to force ImportError on
+    # the next `from ... import ...` without touching the real file.
+    monkeypatch.setitem(sys.modules, "bookkeeper.categorize.statistical", None)
+
+    cascade = build_default_cascade(use_llm=False)
+
+    assert Tier.STATISTICAL not in {t.tier for t in cascade.tiers}
+    reasons = dict(cascade.unavailable)
+    assert Tier.STATISTICAL in reasons
+    assert reasons[Tier.STATISTICAL]  # a real reason string, not blank
+
+
+def test_build_default_cascade_unavailable_empty_when_all_tiers_present():
+    # With statistical.py / llm.py both landed, a full build should report
+    # nothing missing.
+    cascade = build_default_cascade(use_llm=True)
+    assert cascade.unavailable == ()
+    assert {t.tier for t in cascade.tiers} == {
+        Tier.MEMORY,
+        Tier.RULE,
+        Tier.MCC,
+        Tier.STATISTICAL,
+        Tier.LLM,
+    }
