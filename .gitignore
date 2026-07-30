@@ -1,0 +1,30 @@
+# Secrets — SimpleFIN Access URL is a banking credential. Never commit.
+data/secrets/
+*.access-url
+
+# Raw fetch archive and learned state
+data/raw/
+data/eval/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+.env
+.env.local
+*.tsbuildinfo
+
+# SQLite
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# OMC operational state
+.omc/
