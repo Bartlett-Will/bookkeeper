@@ -1,0 +1,6 @@
+option "title" "Bookkeeper fixture"
+option "operating_currency" "USD"
+
+include "accounts.beancount"
+include "budget.beancount"
+include "transactions/*.beancount"

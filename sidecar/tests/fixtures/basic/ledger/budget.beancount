@@ -1,0 +1,11 @@
+2026-01-01 custom "envelope" "allocate" "Groceries"    600.00 USD
+2026-01-01 custom "envelope" "allocate" "Dining Out"   150.00 USD
+2026-01-01 custom "envelope" "allocate" "Transport"    120.00 USD
+2026-01-01 custom "envelope" "allocate" "Rent"        1200.00 USD
+2026-01-01 custom "envelope" "allocate" "Utilities"    100.00 USD
+
+2026-02-01 custom "envelope" "allocate" "Groceries"    600.00 USD
+2026-02-01 custom "envelope" "allocate" "Dining Out"   150.00 USD
+2026-02-01 custom "envelope" "allocate" "Transport"    120.00 USD
+2026-02-01 custom "envelope" "allocate" "Rent"        1200.00 USD
+2026-02-01 custom "envelope" "allocate" "Utilities"    150.00 USD

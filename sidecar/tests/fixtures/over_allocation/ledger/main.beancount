@@ -1,0 +1,15 @@
+option "operating_currency" "USD"
+
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Assets:Checking          USD
+2026-01-01 open Expenses:Test:Category   USD
+
+2026-01-01 custom "envelope" "map" "Expenses:Test:Category" "Test"
+
+; Only 100 in cash, but 500 allocated to the envelope: available =
+; 100 - 500 = -400. Must fail verify.
+2026-01-01 custom "envelope" "allocate" "Test" 500.00 USD
+
+2026-01-01 * "Opening balance"
+    Assets:Checking      100.00 USD
+    Equity:Opening-Balances

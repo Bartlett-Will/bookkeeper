@@ -1,0 +1,19 @@
+option "operating_currency" "USD"
+
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Assets:Checking                USD
+2026-01-01 open Expenses:Food:Groceries        USD
+
+; Ambiguous: the same account mapped to two different envelopes.
+2026-01-01 custom "envelope" "map" "Expenses:Food:Groceries" "Groceries"
+2026-01-01 custom "envelope" "map" "Expenses:Food:Groceries" "Food"
+
+2026-01-01 custom "envelope" "allocate" "Groceries" 200.00 USD
+
+2026-01-01 * "Opening balance"
+    Assets:Checking      500.00 USD
+    Equity:Opening-Balances
+
+2026-01-05 * "Groceries"
+    Assets:Checking      -40.00 USD
+    Expenses:Food:Groceries

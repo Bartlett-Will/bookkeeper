@@ -1,0 +1,11 @@
+option "operating_currency" "USD"
+
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Assets:Checking     USD
+
+2026-01-01 * "Opening balance"
+    Assets:Checking      500.00 USD
+    Equity:Opening-Balances
+
+; Deliberately wrong: actual balance is 500.00, not 999.00.
+2026-01-10 balance Assets:Checking   999.00 USD

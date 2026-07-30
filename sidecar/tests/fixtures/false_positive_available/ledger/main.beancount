@@ -1,0 +1,31 @@
+option "operating_currency" "USD"
+
+; The exact worked example from PLAN.md §5.2: opening 500, income 3000,
+; allocations 3400, spending 110.
+;   cash = 500 + 3000 - 110 = 3390
+;   Sigma allocations = 3400  (a naive "allocations <= cash" check WRONGLY
+;                              fires here: 3400 > 3390)
+;   Sigma envelope balances = 3400 - 110 = 3290
+;   available = cash - Sigma balances = 3390 - 3290 = +100  (correct: fine)
+;
+; run_verify() MUST NOT report an over-allocation error for this ledger.
+
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Assets:Checking            USD
+2026-01-01 open Income:Salary              USD
+2026-01-01 open Expenses:Food:Groceries    USD
+
+2026-01-01 custom "envelope" "map" "Expenses:Food:Groceries" "Groceries"
+2026-01-01 custom "envelope" "allocate" "Groceries" 3400.00 USD
+
+2026-01-01 * "Opening balance"
+    Assets:Checking      500.00 USD
+    Equity:Opening-Balances
+
+2026-01-02 * "Paycheck"
+    Assets:Checking      3000.00 USD
+    Income:Salary
+
+2026-01-05 * "Groceries"
+    Assets:Checking      -110.00 USD
+    Expenses:Food:Groceries

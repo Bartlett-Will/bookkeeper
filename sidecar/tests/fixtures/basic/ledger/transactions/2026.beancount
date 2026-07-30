@@ -1,0 +1,88 @@
+; 20 hand-written transactions. Includes an allocate -> spend -> refund
+; sequence for Dining Out (2026-01-15 / 2026-01-16) and two accounts
+; (Electric, Water) rolling into one envelope (Utilities). Running
+; Assets:Checking balance is checked at each month boundary below.
+
+2026-01-01 * "Opening balance"
+    Assets:Checking              3000.00 USD
+    Equity:Opening-Balances
+
+2026-01-02 * "Paycheck"
+    Assets:Checking              2500.00 USD
+    Income:Salary
+
+2026-01-03 * "Rent"
+    Assets:Checking             -1200.00 USD
+    Expenses:Housing:Rent
+
+2026-01-05 * "Groceries"
+    Assets:Checking               -80.00 USD
+    Expenses:Food:Groceries
+
+2026-01-07 * "Dinner out"
+    Assets:Checking               -40.00 USD
+    Expenses:Food:Dining
+
+2026-01-09 * "Gas"
+    Assets:Checking               -35.00 USD
+    Expenses:Transport:Gas
+
+2026-01-11 * "Electric bill"
+    Assets:Checking               -90.00 USD
+    Expenses:Utilities:Electric
+
+2026-01-13 * "Groceries"
+    Assets:Checking               -70.00 USD
+    Expenses:Food:Groceries
+
+2026-01-15 * "Dinner out (overcharged)"
+    Assets:Checking               -60.00 USD
+    Expenses:Food:Dining
+
+2026-01-16 * "Refund - overcharged dinner"
+    Assets:Checking                60.00 USD
+    Expenses:Food:Dining          -60.00 USD
+
+2026-01-18 * "Dinner out"
+    Assets:Checking               -30.00 USD
+    Expenses:Food:Dining
+
+2026-01-20 * "Gas"
+    Assets:Checking               -32.00 USD
+    Expenses:Transport:Gas
+
+2026-01-22 * "Groceries"
+    Assets:Checking               -75.00 USD
+    Expenses:Food:Groceries
+
+2026-01-25 * "Water bill"
+    Assets:Checking               -40.00 USD
+    Expenses:Utilities:Water
+
+2026-01-28 * "Groceries"
+    Assets:Checking               -50.00 USD
+    Expenses:Food:Groceries
+
+2026-02-01 balance Assets:Checking 3758.00 USD
+
+2026-02-01 * "Paycheck"
+    Assets:Checking              2500.00 USD
+    Income:Salary
+
+2026-02-03 * "Rent"
+    Assets:Checking             -1200.00 USD
+    Expenses:Housing:Rent
+
+2026-02-06 * "Groceries"
+    Assets:Checking               -90.00 USD
+    Expenses:Food:Groceries
+
+2026-02-10 * "Dinner out"
+    Assets:Checking               -55.00 USD
+    Expenses:Food:Dining
+
+2026-02-14 * "Gas"
+    Assets:Checking               -36.00 USD
+    Expenses:Transport:Gas
+
+2026-03-01 balance Assets:Checking 4877.00 USD
