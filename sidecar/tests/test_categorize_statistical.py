@@ -4,14 +4,19 @@ from datetime import date
 from decimal import Decimal
 
 from bookkeeper.categorize import statistical
+from bookkeeper.categorize.cascade import Cascade
 from bookkeeper.categorize.models import (
     CategorizationInput,
     LabeledExample,
     LedgerContext,
+    Prediction,
     Tier,
     predict_is_valid,
 )
-from bookkeeper.categorize.statistical import StatisticalCategorizer
+from bookkeeper.categorize.statistical import (
+    DEFAULT_MIN_MARGIN,
+    StatisticalCategorizer,
+)
 
 ACCOUNTS = (
     "Expenses:Food:Coffee",
@@ -64,6 +69,27 @@ def corpus(per_merchant: int, *, start: int = 0) -> tuple[LabeledExample, ...]:
         for merchant, account in MERCHANTS.items()
         for i in range(per_merchant)
     )
+
+
+def _top_two_gap(
+    categorizer: StatisticalCategorizer,
+    transaction: CategorizationInput,
+    ctx: LedgerContext,
+) -> float:
+    """The posterior margin the tier will compare against its floor.
+
+    Recomputed here rather than read off a `Prediction`, because the whole
+    point of the floor is that a below-margin prediction never exists.
+    """
+    model = categorizer._model_for(ctx)
+    assert model is not None
+    features = [
+        f
+        for f in statistical._features(categorizer._normalize(transaction.description))
+        if f in model.vocabulary
+    ]
+    ranked = sorted(statistical._posterior(model, features).values(), reverse=True)
+    return ranked[0] - (ranked[1] if len(ranked) > 1 else 0.0)
 
 
 def txn(description: str) -> CategorizationInput:
@@ -129,6 +155,102 @@ def test_abstains_when_nothing_in_the_description_was_ever_seen():
     ctx = LedgerContext(accounts=ACCOUNTS, examples=corpus(4))
 
     assert make_categorizer().predict(txn("ZZZZZ QQQQQ"), ctx) is None
+
+
+def test_abstains_when_the_top_two_classes_are_near_tied():
+    # A near-tie is the absence of an answer, not a weak one. The cascade is
+    # first-hit-wins, so answering here consumes a transaction that tier 4
+    # exists to handle.
+    ctx = LedgerContext(accounts=ACCOUNTS, examples=corpus(6))
+    categorizer = make_categorizer()
+
+    # One token from each of two merchants that carry different accounts, and
+    # nothing else to break the tie.
+    ambiguous = txn("SHELL COFFEE")
+    posterior_gap = _top_two_gap(categorizer, ambiguous, ctx)
+
+    assert posterior_gap < DEFAULT_MIN_MARGIN, "fixture must actually be a near-tie"
+    assert categorizer.predict(ambiguous, ctx) is None
+
+
+def test_a_clear_winner_still_answers():
+    ctx = LedgerContext(accounts=ACCOUNTS, examples=corpus(6))
+    categorizer = make_categorizer()
+    clear = txn("ACH DEBIT - PG&E WEB ONLINE 3300")
+
+    assert _top_two_gap(categorizer, clear, ctx) >= DEFAULT_MIN_MARGIN
+    prediction = categorizer.predict(clear, ctx)
+
+    assert prediction is not None
+    assert prediction.account == "Expenses:Home:Utilities"
+
+
+class _RecordingLlmTier:
+    """Stand-in for tier 4 that records what the cascade handed it."""
+
+    tier = Tier.LLM
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def predict(self, txn: CategorizationInput, ctx: LedgerContext) -> Prediction:
+        self.seen.append(txn.description)
+        return Prediction(
+            account=ctx.accounts[0], confidence=0.7, tier=Tier.LLM, rationale="stub"
+        )
+
+
+def test_a_near_tie_on_an_unseen_merchant_reaches_the_llm_tier():
+    """The reason `DEFAULT_MIN_MARGIN` exists, pinned end to end.
+
+    §5.4 is "the LLM handles the tail, not the head". Before this floor the
+    tier answered 98.3% of the held-out split and tier 4 saw one transaction
+    in sixty -- the tail had been guessed away before the model that exists to
+    handle it was ever consulted (`docs/phase3-accuracy.md`, Finding 1).
+
+    Asserted through a real `Cascade` rather than as `predict() is None`,
+    because the abstention is not the point: the *fall-through* is. A future
+    change that made this tier answer near-ties again would still satisfy an
+    abstention-only test if it merely renamed the condition.
+    """
+    ctx = LedgerContext(accounts=ACCOUNTS, examples=corpus(6))
+    llm = _RecordingLlmTier()
+    cascade = Cascade([make_categorizer(), llm])
+
+    unseen = txn("SHELL COFFEE")
+    prediction = cascade.predict(unseen, ctx)
+
+    assert llm.seen == ["SHELL COFFEE"], "the novel merchant must reach tier 4"
+    assert prediction is not None
+    assert prediction.tier is Tier.LLM
+
+
+def test_a_merchant_the_tier_knows_never_reaches_the_llm_tier():
+    # The other half of the same design: the floor must not become a general
+    # surrender that routes the head of the distribution to the model too.
+    # That would be expensive, slower, and is what tiers 1-3 exist to prevent.
+    ctx = LedgerContext(accounts=ACCOUNTS, examples=corpus(6))
+    llm = _RecordingLlmTier()
+    cascade = Cascade([make_categorizer(), llm])
+
+    prediction = cascade.predict(txn("ACH DEBIT - PG&E WEB ONLINE 3300"), ctx)
+
+    assert llm.seen == []
+    assert prediction is not None
+    assert prediction.tier is Tier.STATISTICAL
+    assert prediction.account == "Expenses:Home:Utilities"
+
+
+def test_the_margin_floor_is_tunable_per_instance():
+    # Phase 6 retunes this against real confirmations; the eval harness sweeps
+    # it. Neither should have to monkeypatch a module constant to do so.
+    ctx = LedgerContext(accounts=ACCOUNTS, examples=corpus(6))
+    ambiguous = txn("SHELL COFFEE")
+
+    assert StatisticalCategorizer(normalizer=trivial_normalizer).predict(ambiguous, ctx) is None
+    permissive = StatisticalCategorizer(normalizer=trivial_normalizer, min_margin=0.0)
+
+    assert permissive.predict(ambiguous, ctx) is not None
 
 
 def test_abstains_when_the_description_has_no_features():

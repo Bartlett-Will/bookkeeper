@@ -18,6 +18,10 @@ which puts two demands on it that a plain accuracy score does not capture:
 - It has to *abstain* rather than answer off a corpus too small to support an
   estimate. Two confirmed examples do not make a classifier, and a confident
   wrong answer at tier 3 short-circuits the LLM that would have got it right.
+- It has to abstain on near-ties too, which is the same point measured rather
+  than argued. The first version of this tier answered 98.3% of the held-out
+  split and its every error was a novel merchant it had never seen; the
+  cascade below it received one transaction. See `DEFAULT_MIN_MARGIN`.
 
 Features are word tokens plus character 3- and 4-grams. Character n-grams are
 what make this work on the bank-mangled strings of §3.1: `SQ *COFFEE 4TH ST
@@ -60,6 +64,61 @@ _MIN_CLASSES = 2
 _ALPHA = 0.2
 
 _CHAR_NGRAM_SIZES = (3, 4)
+
+#: How far ahead of the runner-up the winning class must be before this tier
+#: will answer at all.
+#:
+#: Without it the tier answered 98.3% of the held-out split, which left the
+#: LLM tier exactly one transaction and made §5.4's "the LLM handles the tail,
+#: not the head" false by construction -- there was no tail, because this tier
+#: had guessed it. Every cascade error was a novel merchant this tier had
+#: never seen and answered anyway.
+#:
+#: Measured on the committed corpus (10 accounts, 238 train / 60 held out),
+#: this tier run in isolation:
+#:
+#:     margin   coverage  precision   top-1
+#:       0.00     98.3%      84.7%    83.3%
+#:       0.05     95.0%      87.7%    83.3%
+#:       0.10     86.7%      96.2%    83.3%   <- here
+#:       0.15     85.0%      98.0%    83.3%
+#:       0.20     80.0%      97.9%    78.3%
+#:
+#: Precision buys 11.5 points and top-1 accuracy does not move, because every
+#: prediction suppressed between 0.05 and 0.15 is a wrong one. 0.10 sits in
+#: the middle of that plateau rather than at 0.15's edge: this is a synthetic
+#: corpus and the plateau's right-hand end is the least trustworthy part of it.
+#:
+#: A *margin* rather than a floor on the winning posterior, which is the
+#: obvious alternative. Be precise about the evidence: measured **end to end**
+#: the two are indistinguishable on this corpus -- margin 0.10 and posterior
+#: 0.25/0.30 all give cascade 93.3% coverage, 96.4% precision, 90.0% accuracy,
+#: because memory and MCC have already absorbed the easy cases and both rules
+#: make the same calls on the small residual. The difference shows up on this
+#: tier measured **in isolation**, where the posterior floor at matched 86.7%
+#: coverage scores 94.2% precision and drops top-1 to 81.7%, against 96.2% and
+#: 83.3% here.
+#:
+#: So the reason to prefer the margin is structural rather than a demonstrated
+#: end-to-end win. With ten classes an absolute posterior is diluted by however
+#: many accounts happen to be partially plausible, so it cannot tell "I am torn
+#: between two accounts" from "the evidence is smeared across eight I
+#: half-matched", and its right setting moves as the ledger opens accounts. The
+#: margin asks the question a first-hit-wins cascade actually needs answered --
+#: is the winner meaningfully ahead of the runner-up -- and is invariant to how
+#: the remaining mass is spread.
+#:
+#: This number was chosen by measurement, not by taste. Anyone tempted to
+#: adjust it should re-run the sweep rather than reason about it: see
+#: `docs/phase3-accuracy.md`, Finding 1, which records the before/after and
+#: the reasoning for preferring a margin over a posterior floor. Higher
+#: settings do buy precision, but from 0.20 up they pay for it in real
+#: accuracy -- they start suppressing correct answers, not just wrong ones.
+#:
+#: Tunable per-instance, and the constant is a starting point rather than a
+#: tuned parameter: re-measure it against real confirmations in Phase 6. Both
+#: the sweep above and the corpus behind it are synthetic.
+DEFAULT_MIN_MARGIN = 0.10
 
 _TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
 
@@ -221,8 +280,14 @@ class StatisticalCategorizer:
 
     tier = Tier.STATISTICAL
 
-    def __init__(self, *, normalizer: Callable[[str], str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        normalizer: Callable[[str], str] | None = None,
+        min_margin: float = DEFAULT_MIN_MARGIN,
+    ) -> None:
         self._normalize = normalizer if normalizer is not None else _default_normalizer()
+        self.min_margin = min_margin
         self._cache: tuple[
             tuple[LabeledExample, ...], tuple[str, ...], _Model | None
         ] | None = None
@@ -267,10 +332,15 @@ class StatisticalCategorizer:
             # let the LLM tier, which is there for exactly this case, have it.
             return None
 
-        posterior = _posterior(model, features)
-        account, confidence = min(
-            posterior.items(), key=lambda item: (-item[1], item[0])
-        )
+        ranked = sorted(_posterior(model, features).items(), key=lambda kv: (-kv[1], kv[0]))
+        account, confidence = ranked[0]
+        runner_up = ranked[1][1] if len(ranked) > 1 else 0.0
+        if confidence - runner_up < self.min_margin:
+            # A near-tie is not a weak answer, it is the absence of one, and
+            # the cascade is first-hit-wins: answering here consumes a
+            # transaction the LLM tier exists to handle. See
+            # DEFAULT_MIN_MARGIN for what this costs and buys.
+            return None
         if account not in ctx.accounts:
             return None
 
