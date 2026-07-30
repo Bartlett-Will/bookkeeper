@@ -1,0 +1,15 @@
+;; Envelope allocations (PLAN.md §5.2).
+;;
+;; Deliberately empty until real cash exists in the ledger: `available(asof)
+;; = budgeted cash - Σ balance(E)`, so allocating against zero cash would
+;; make `bookkeeper verify`'s over-allocation check fail from the very first
+;; commit. Uncomment/adjust the starter budget below once a sync (or an
+;; opening-balance transaction) has put money in Assets:Checking.
+;;
+;; 2026-01-01 custom "envelope" "allocate" "Groceries"       600.00 USD
+;; 2026-01-01 custom "envelope" "allocate" "Dining Out"       200.00 USD
+;; 2026-01-01 custom "envelope" "allocate" "Transport"        150.00 USD
+;; 2026-01-01 custom "envelope" "allocate" "Rent"            1200.00 USD
+;; 2026-01-01 custom "envelope" "allocate" "Utilities"        150.00 USD
+;; 2026-01-01 custom "envelope" "allocate" "Subscriptions"     60.00 USD
+;; 2026-01-01 custom "envelope" "allocate" "Health"           100.00 USD

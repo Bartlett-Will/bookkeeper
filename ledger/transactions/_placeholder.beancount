@@ -1,0 +1,7 @@
+; Keeps `include "transactions/*.beancount"` in main.beancount resolvable
+; before the first `bookkeeper sync` has generated a dated file here (glob
+; includes error if nothing matches, and Python's glob skips dotfiles, so
+; this file deliberately does NOT start with a dot). Contains zero
+; directives. Safe to leave in place once real files land alongside it
+; (bookkeeper.ingest owns this directory) — remove only if a dated file's
+; glob match makes it redundant.

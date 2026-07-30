@@ -1,0 +1,49 @@
+;; Chart of accounts and envelope mapping (PLAN.md §5.2).
+;;
+;; Envelope balances are computed state, not real postings: every
+;; `Expenses:*` account below must map to exactly one envelope via a
+;; `custom "envelope" "map"` directive below, or `bookkeeper verify` fails
+;; loudly naming the account. `Expenses:Unknown` is intentionally left
+;; UNMAPPED — that omission is what makes an uncategorized transaction show
+;; up as a verify failure instead of silently vanishing from the budget view.
+;; Map it to a real envelope only once a transaction has been categorized
+;; out of it.
+
+2026-01-01 open Equity:Opening-Balances
+
+;; Bank accounts (SimpleFIN demo server through Phase 5; real accounts land
+;; in Phase 6). `bookkeeper.ingest` is the sole writer of transactions
+;; against these — see PLAN.md §9.
+2026-01-01 open Assets:Checking                     USD
+2026-01-01 open Assets:Savings                      USD
+
+;; Catch-alls. `bookkeeper.ingest` lands every transaction it cannot
+;; classify in Expenses:Unknown; Income:Unknown exists for symmetry on the
+;; deposit side. Neither is mapped to an envelope on purpose (see above).
+2026-01-01 open Expenses:Unknown                    USD
+2026-01-01 open Income:Unknown                      USD
+
+;; Budget categories.
+2026-01-01 open Expenses:Food:Groceries             USD
+2026-01-01 open Expenses:Food:Dining                USD
+2026-01-01 open Expenses:Transport:Gas              USD
+2026-01-01 open Expenses:Housing:Rent               USD
+2026-01-01 open Expenses:Utilities:Electric         USD
+2026-01-01 open Expenses:Utilities:Water            USD
+2026-01-01 open Expenses:Utilities:Internet         USD
+2026-01-01 open Expenses:Subscriptions              USD
+2026-01-01 open Expenses:Health                     USD
+
+2026-01-01 open Income:Salary                       USD
+
+;; Envelope mapping — one envelope per expense account. Several accounts
+;; may roll up into the same envelope (e.g. the two utility accounts below).
+2026-01-01 custom "envelope" "map" "Expenses:Food:Groceries"      "Groceries"
+2026-01-01 custom "envelope" "map" "Expenses:Food:Dining"         "Dining Out"
+2026-01-01 custom "envelope" "map" "Expenses:Transport:Gas"       "Transport"
+2026-01-01 custom "envelope" "map" "Expenses:Housing:Rent"        "Rent"
+2026-01-01 custom "envelope" "map" "Expenses:Utilities:Electric"  "Utilities"
+2026-01-01 custom "envelope" "map" "Expenses:Utilities:Water"     "Utilities"
+2026-01-01 custom "envelope" "map" "Expenses:Utilities:Internet"  "Utilities"
+2026-01-01 custom "envelope" "map" "Expenses:Subscriptions"       "Subscriptions"
+2026-01-01 custom "envelope" "map" "Expenses:Health"              "Health"
