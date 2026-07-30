@@ -28,3 +28,7 @@ node_modules/
 
 # OMC operational state
 .omc/
+
+# SQLite sidecar files (web/data/local.db-shm, -wal)
+*.db-shm
+*.db-wal
