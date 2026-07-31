@@ -326,6 +326,14 @@ def confirm_categorizations(
             )
 
     warnings: list[str] = []
+    # Read the descriptions BEFORE the ledger write, not after. `_descriptions_for`
+    # sources them from the *uncategorized* set, and `apply_edits` below is
+    # precisely what makes these transactions no longer uncategorized -- so a
+    # lookup afterwards can never find them, and tier 1 silently learns nothing
+    # while the ledger write reports success. Every test injected `transactions`
+    # explicitly, so the default path (the one the API and CLI take) had no
+    # coverage and the bug survived Phase 3.
+    descriptions = _descriptions_for({c.key for c in confirmations}, transactions)
     edits = [
         LedgerEdit(
             asset_account=c.asset_account,
@@ -352,7 +360,6 @@ def confirm_categorizations(
             default_normalize, default_record = _default_memory_hooks()
             normalize = normalize or default_normalize
             record = record or default_record
-        descriptions = _descriptions_for(landed, transactions)
         for key in sorted(landed):
             confirmation = next(c for c in confirmations if c.key == key)
             description = descriptions.get(key)

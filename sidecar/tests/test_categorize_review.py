@@ -432,6 +432,55 @@ def test_confirming_nothing_is_a_clean_no_op(ledger):
     assert _ledger_text() == before
 
 
+def test_confirmation_learns_without_transactions_being_injected(ledger):
+    """Confirm with no `transactions=`, so the description is looked up by default.
+
+    The third bug of this exact shape in this module, and the reason it keeps
+    happening: every other test hands `confirm_categorizations` its
+    `transactions` explicitly, so the default lookup — the path the API and the
+    CLI actually take — went uncovered.
+
+    The specific failure this pins: descriptions were read *after* `apply_edits`
+    rewrote the ledger, from the set of transactions still posting to
+    `Expenses:Unknown`. Applying the edit is exactly what removes a transaction
+    from that set, so the lookup could never find it. The ledger write reported
+    success, `learned` was silently 0, and tier 1 never saw the correction —
+    which quietly breaks "corrections change the next run's predictions".
+    """
+    # The default lookup loads the ledger, so this test needs a *loadable* tree
+    # rather than the bare transactions file the `ledger` fixture writes. That
+    # difference is the whole point: injecting `transactions` is what let every
+    # other test pass over a broken lookup.
+    ledger_dir = paths.ledger_dir()
+    (ledger_dir / "accounts.beancount").write_text(
+        f"2026-01-01 open {CHECKING} USD\n"
+        "2026-01-01 open Expenses:Unknown USD\n"
+        + "".join(f"2026-01-01 open {a} USD\n" for a in ACCOUNTS),
+        encoding="utf-8",
+    )
+    (ledger_dir / "main.beancount").write_text(
+        'option "operating_currency" "USD"\n'
+        'include "accounts.beancount"\n'
+        'include "transactions/*.beancount"\n',
+        encoding="utf-8",
+    )
+
+    result = confirm_categorization(
+        "TXN-GROC",
+        CHECKING,
+        "Expenses:Food:Groceries",
+        commit=False,
+        context=CONTEXT,
+    )
+
+    assert result.ok
+    assert result.confirmed == 1
+    assert result.learned == 1, f"tier 1 did not learn; warnings: {result.warnings}"
+    assert not result.warnings
+    remembered = json.loads((paths.data_dir() / "memory.json").read_text(encoding="utf-8"))
+    assert remembered == {"local grocer store": {"Expenses:Food:Groceries": 1}}
+
+
 def test_confirmation_works_through_the_real_memory_hooks(ledger):
     """Confirm with no injected normalizer/recorder, exercising the real ones.
 
