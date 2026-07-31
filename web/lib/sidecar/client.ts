@@ -4,6 +4,7 @@ import type {
   AllocateRequest,
   AllocateResponse,
   CallOptions,
+  CategorizableAccountsResponse,
   CategorizeRequest,
   CategorizeResponse,
   ConfirmRequest,
@@ -236,6 +237,24 @@ export function getVerify(
   );
 }
 
+/**
+ * The accounts a transaction may be recategorized *into*.
+ *
+ * Not `/accounts`, which returns the `Assets:` side — that is the wrong set
+ * for a correction dropdown. The review UI fetches this to pre-validate
+ * before confirming: `POST /review/confirm` rejects the whole batch if any
+ * account is not open in the ledger, so without the check one bad account
+ * costs the user every other approval in the batch.
+ */
+export function getCategorizableAccounts(
+  options?: CallOptions
+): Promise<SidecarResult<CategorizableAccountsResponse>> {
+  return call<CategorizableAccountsResponse>(
+    { path: "/accounts/categorizable", timeoutMs: READ_TIMEOUT_MS },
+    options
+  );
+}
+
 export function getEnvelopes(
   params: { asof?: string | null } = {},
   options?: CallOptions
@@ -405,6 +424,7 @@ export const sidecar = {
   allocateToEnvelope,
   categorize,
   confirmReview,
+  getCategorizableAccounts,
   getEnvelopes,
   getHealth,
   getReviewQueue,

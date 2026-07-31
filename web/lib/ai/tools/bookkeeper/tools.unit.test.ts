@@ -399,6 +399,29 @@ describe("toModelOutput — what the model is allowed to read back", () => {
     }
   });
 
+  it("tells the model the figures are absent, not merely off-limits", () => {
+    // The regression guard for the fabrication measured on 2026-07-31. The
+    // previous wording ("do not repeat its numbers") implied the model was
+    // holding the figures, and it answered "You have $25.00 left in your
+    // Groceries envelope" against a real balance of 0.00 — a different
+    // invented number on each of four turns. Withholding the data is only
+    // half the mechanism; the model also has to be told it does not have it,
+    // or it fills the gap. See renderedByTheUi in result.ts.
+    const tools = bookkeeperTools(fakeClient().client);
+    for (const name of BOOKKEEPER_TOOL_NAMES) {
+      const spec = tools[name] as unknown as ToolSpec;
+      const { value } = spec.toModelOutput({
+        output: { data: envelopes, kind: "envelopes", status: "ok" },
+      });
+      assert.match(
+        value,
+        /not shown the figures|do not know them/i,
+        `${name} must tell the model the figures are absent`
+      );
+      assert.match(value, /invented|state none/i);
+    }
+  });
+
   it("passes an error through, because the model does have to relay it", () => {
     const tools = bookkeeperTools(fakeClient().client);
     const spec = tools.get_envelope_status as unknown as ToolSpec;

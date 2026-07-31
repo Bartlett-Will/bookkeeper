@@ -29,6 +29,7 @@ from decimal import Decimal
 
 import pytest
 from beancount import loader
+from beancount.core.data import Transaction
 
 from bookkeeper.reports.search import (
     DEFAULT_LIMIT,
@@ -117,6 +118,25 @@ def ledger():
 
 
 @pytest.fixture(scope="module")
+def searchable_text(ledger):
+    """Every field the query actually matches on, as one blob.
+
+    Narration, payee and account -- the three things `_SEARCH_QUERY` looks
+    at. Deliberately not the ledger source, which also carries syntax the
+    query never sees.
+    """
+    entries, _errors, _options = ledger
+    parts: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, Transaction):
+            continue
+        parts.append(entry.narration or "")
+        parts.append(entry.payee or "")
+        parts.extend(posting.account for posting in entry.postings)
+    return "\n".join(parts)
+
+
+@pytest.fixture(scope="module")
 def ambiguous_ledger():
     entries, errors, options = loader.load_string(AMBIGUOUS_LEDGER)
     assert not errors, errors
@@ -175,13 +195,18 @@ UNCOMPILABLE = ["[", "*", "?", "\\", "[[[", "(?P<x>", "{2,}"]
 
 
 @pytest.mark.parametrize("hostile", UNCOMPILABLE)
-def test_input_that_would_not_compile_as_a_regex_is_an_ordinary_empty_result(ledger, hostile):
+def test_input_that_would_not_compile_as_a_regex_is_an_ordinary_empty_result(
+    ledger, searchable_text, hostile
+):
     """Unescaped, each of these raises `re.error` inside the query engine and
     surfaces as a 500 on a chat turn."""
-    # Self-check: if a future edit to LEDGER introduces one of these
-    # characters, this case would start matching a real row and quietly stop
-    # testing what it claims to. Fail loudly instead.
-    assert hostile not in LEDGER, f"{hostile!r} now occurs in the fixture; pick another"
+    # Self-check: if a future edit to the fixture introduces one of these
+    # characters into a searchable field, this case would start matching a
+    # real row and quietly stop testing what it claims to. Checked against
+    # narration/payee/account rather than the raw source, because the source
+    # also contains beancount syntax the query never sees -- `*` is the
+    # transaction flag on every entry, and is not searchable text.
+    assert hostile not in searchable_text, f"{hostile!r} now occurs in the fixture; pick another"
 
     result = search(ledger, hostile)
 

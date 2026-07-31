@@ -118,6 +118,19 @@ export type HealthResponse = Schemas["HealthResponse"];
 export type VerifyResponse = Schemas["VerifyResponse"];
 export type AccountsResponse = Schemas["AccountsResponse"];
 
+/**
+ * The accounts a transaction may be recategorized *into* — open `Expenses:*`
+ * and `Income:*`, minus the `Unknown` catch-alls. Distinct from
+ * `AccountsResponse`, which is the `Assets:` side and is the wrong set for a
+ * correction dropdown.
+ *
+ * The review UI pre-validates against this before confirming, because
+ * `POST /review/confirm` rejects the whole batch if any account is not open —
+ * without the check, one bad account costs the user their other 39 approvals.
+ */
+export type CategorizableAccountsResponse =
+  Schemas["CategorizableAccountsResponse"];
+
 export type EnvelopeReportResponse = Schemas["EnvelopeReportResponse"];
 export type EnvelopeBalance = Schemas["EnvelopeBalanceModel"];
 
@@ -169,6 +182,9 @@ export type CallOptions = {
 export type SidecarPort = {
   getHealth: (options?: CallOptions) => Promise<SidecarResult<HealthResponse>>;
   getVerify: (options?: CallOptions) => Promise<SidecarResult<VerifyResponse>>;
+  getCategorizableAccounts: (
+    options?: CallOptions
+  ) => Promise<SidecarResult<CategorizableAccountsResponse>>;
   getEnvelopes: (
     params?: { asof?: string | null },
     options?: CallOptions

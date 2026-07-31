@@ -24,15 +24,25 @@ export type SidecarResult<T> =
 
 export type SyncStarted = {
   job_id: string;
+  /**
+   * False when a sync was already running and this is *that* job's id rather
+   * than a second one. Not an error — SimpleFIN allows only ~24 requests a day
+   * (PLAN.md §3.1), so refusing to launch a duplicate is the point. Polling is
+   * identical either way.
+   */
+  started: boolean;
 };
 
 /**
- * The payload shapes below are the sidecar's own `to_dict()` output, field for
- * field. They were originally guessed ahead of the Python; they are now read
- * off `categorize/review.py`, `reports/spending.py`, `reports/search.py` and
- * `envelope/allocate.py`, with `sidecar-adapter.ts` doing the one translation
- * the sidecar does not do for us (its spending report nests points under each
- * envelope; the chart wants them flat).
+ * The payload shapes below are the sidecar's, field for field, confirmed
+ * against the live `/openapi.json` (14 endpoints, no bare dicts).
+ *
+ * All four Phase 4 endpoints are **flat**: the domain object's fields sit at
+ * the top level beside `ok` and `summary`. Only `/review-queue` keeps a
+ * wrapper, under the key `queue`. `sidecar-adapter.ts` does two translations
+ * the sidecar does not do for us — the spending report nests points under each
+ * envelope where the chart wants them flat, and `shown` is computed because
+ * the API does not emit it.
  */
 
 /**
@@ -59,9 +69,11 @@ export type ReviewEntry = {
 };
 
 /**
- * Mirrors `ReviewQueue.to_dict()`. `total` is the size of the whole queue and
- * `shown` is how much of it came back — the tool caps the request, so those
- * two differ routinely and the card has to say so.
+ * Mirrors `ReviewQueueModel`, the payload under `ReviewQueueResponse.queue`.
+ *
+ * `total` is the size of the whole queue; `shown` is how much of it came back.
+ * The tool caps the request, so those two differ routinely and the card has to
+ * say so. `shown` is computed from `entries` — the API does not send it.
  */
 export type ReviewQueue = {
   ok: boolean;
