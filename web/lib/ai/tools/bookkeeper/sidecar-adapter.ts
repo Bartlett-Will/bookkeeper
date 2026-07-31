@@ -54,7 +54,7 @@ export function createSidecarBookkeeperClient(
           // day the allocation is *effective in the ledger*, which is the
           // date on the emitted `custom "envelope" "allocate"` directive, not
           // the wall-clock moment the request was made.
-          allocated_on: input.date ?? null,
+          allocated_on: input.allocated_on ?? null,
           amount: input.amount,
           currency: input.currency,
           envelope: input.envelope,

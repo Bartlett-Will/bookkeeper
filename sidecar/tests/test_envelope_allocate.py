@@ -306,9 +306,7 @@ def test_sub_cent_precision_is_rounded_and_said_out_loud(ledger_root):
     assert '"Groceries" 10.02 USD' in _budget(root)
 
 
-@pytest.mark.parametrize(
-    "currency", ["usd", "US$", "TOOLONGACURRENCYNAMEINDEEDXX", "1USD", "   "]
-)
+@pytest.mark.parametrize("currency", ["usd", "US$", "TOOLONGACURRENCYNAMEINDEEDXX", "1USD"])
 def test_an_invalid_currency_is_refused_before_it_reaches_the_file(ledger_root, currency):
     """Caught here rather than discovered at parse time, so a bad currency is
     a reason rather than a corrupted file that has to be rolled back."""
@@ -321,18 +319,20 @@ def test_an_invalid_currency_is_refused_before_it_reaches_the_file(ledger_root, 
     assert _budget(root) == before
 
 
-def test_an_empty_currency_falls_back_to_the_default(ledger_root):
+@pytest.mark.parametrize("currency", ["", "   ", "\t", None])
+def test_an_unsaid_currency_falls_back_to_the_default(ledger_root, currency):
     """Empty is "didn't say", not "said something invalid", so it gets USD.
 
-    Note the boundary, pinned deliberately: `""` defaults, but `"   "` is
-    *refused* by the case above. `_validate_currency` treats the empty string
-    as falsy and substitutes the default before stripping, so whitespace
-    survives to the regex and fails it. That asymmetry is unlikely to matter
-    -- both arrive only from a caller that meant to omit the field -- but it
-    is real, and a test that quietly accepted either would hide it.
+    **Whitespace-only normalizes rather than being refused, deliberately** --
+    `_validate_currency` strips before falling back, so `None`, `""` and
+    `"   "` are one case. Do not "fix" this back: an 8B model picks this
+    argument (§3.3), emitting `" "` where it meant to omit the field is an
+    ordinary failure for one, and losing a valid allocation to a stray space
+    is worse than accepting it. A non-empty string that is not a currency is
+    still refused -- see the case above.
     """
     root = ledger_root()
-    result = allocate_to_envelope("Groceries", "50.00", currency="", commit=False)
+    result = allocate_to_envelope("Groceries", "50.00", currency=currency, commit=False)
 
     assert result.ok, result.errors
     assert result.currency == "USD"

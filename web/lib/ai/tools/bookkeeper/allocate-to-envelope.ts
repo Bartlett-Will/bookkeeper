@@ -107,9 +107,9 @@ export function allocateToEnvelope(client: BookkeeperClient) {
       }
 
       const result = await client.allocateToEnvelope({
+        allocated_on: when,
         amount: toDecimalString(amount),
         currency: CURRENCY,
-        date: when,
         envelope: match.name,
       });
       if (!result.ok) {

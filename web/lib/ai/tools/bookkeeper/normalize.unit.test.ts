@@ -6,76 +6,52 @@ import {
   toSpendingReport,
   toSyncStarted,
   toTransactionSearch,
-  unwrap,
 } from "./normalize";
 
-// The bodies below are copied from the sidecar's `to_dict()` methods
-// (`categorize/review.py`, `reports/spending.py`, `reports/search.py`,
-// `envelope/allocate.py`, `jobs.py`), which is the only contract these four
-// endpoints have until they appear in the OpenAPI schema.
+// The bodies below are the sidecar's real response shapes, confirmed against
+// the live `/openapi.json` rather than inferred from the Python. All four
+// Phase 4 endpoints are **flat** — the domain fields sit at the top level
+// beside `ok` and `summary`. Only `/review-queue` wraps, under `queue`.
 //
 // The recurring assertion in this file is that **amounts come out as the exact
 // strings that went in**. Pydantic serializes `Decimal` to a string precisely
 // so nobody's books round-trip through a float, and this mapping layer is
 // where that would be undone.
 
-describe("unwrap", () => {
-  it("descends into the sidecar's {ok, summary, <key>} envelope", () => {
-    assert.deepEqual(unwrap({ ok: true, queue: { total: 3 }, summary: "x" }), {
-      total: 3,
-    });
-  });
-
-  it("names the key nothing in particular", () => {
-    // /review-queue calls it `queue`, /categorize calls it `result`.
-    assert.deepEqual(unwrap({ ok: true, result: { a: 1 }, summary: "" }), {
-      a: 1,
-    });
-  });
-
-  it("passes a flat body through untouched", () => {
-    const flat = { ok: true, shown: 1, total: 2 };
-    assert.deepEqual(unwrap(flat), flat);
-  });
-
-  it("does not mistake a top-level array for the payload", () => {
-    // A flattened body has `entries` at the top level; descending into it
-    // would return the first entry as if it were the whole queue.
-    const flat = { entries: [{ amount: "1.00" }], ok: true, total: 1 };
-    assert.deepEqual(unwrap(flat), flat);
-  });
-
-  it("survives a body that is not an object", () => {
-    assert.deepEqual(unwrap(null), {});
-    assert.deepEqual(unwrap("nope"), {});
-    assert.deepEqual(unwrap(undefined), {});
-  });
-});
-
 describe("toSyncStarted", () => {
-  it("reads a bare job handle", () => {
-    assert.deepEqual(toSyncStarted({ job_id: "abc123" }), { job_id: "abc123" });
+  it("maps SyncStartResponse", () => {
+    assert.deepEqual(
+      toSyncStarted({
+        job_id: "abc123",
+        kind: "sync",
+        started: true,
+        state: "running",
+      }),
+      { job_id: "abc123", started: true }
+    );
   });
 
-  it("reads job_id off a full JobSnapshot without descending into `result`", () => {
-    const snapshot = {
-      error: null,
-      finished_at: null,
+  it("carries started:false, which means a sync was already running", () => {
+    // Not an error: SimpleFIN allows ~24 requests a day, so being handed the
+    // existing job's id instead of launching a second one is the point.
+    const handedExisting = toSyncStarted({
       job_id: "abc123",
       kind: "sync",
-      progress: 0,
-      result: { imported: 43 },
-      started_at: 1.0,
+      started: false,
       state: "running",
-      step: "",
-      total: 43,
-    };
-    assert.deepEqual(toSyncStarted(snapshot), { job_id: "abc123" });
+    });
+    assert.equal(handedExisting.started, false);
+    assert.equal(handedExisting.job_id, "abc123");
+  });
+
+  it("reads as already-running rather than newly-started when the flag is absent", () => {
+    // Claiming a sync began when it did not is the misleading direction.
+    assert.equal(toSyncStarted({ job_id: "abc123" }).started, false);
   });
 
   it("yields an empty id rather than throwing on a body it does not recognise", () => {
-    assert.deepEqual(toSyncStarted({}), { job_id: "" });
-    assert.deepEqual(toSyncStarted(null), { job_id: "" });
+    assert.deepEqual(toSyncStarted({}), { job_id: "", started: false });
+    assert.deepEqual(toSyncStarted(null), { job_id: "", started: false });
   });
 });
 
@@ -157,37 +133,35 @@ describe("toReviewQueue", () => {
 describe("toSpendingReport", () => {
   const requested = { from: "2026-05-01", to: "2026-07-30" };
 
+  /** `SpendingReportResponse`, flat. */
   const body = {
+    currency: "USD",
+    envelopes: [
+      {
+        name: "Groceries",
+        points: [
+          { amount: "412.37", period: "2026-05" },
+          { amount: "388.10", period: "2026-06" },
+        ],
+        total: "800.47",
+      },
+      {
+        name: "Transport",
+        points: [{ amount: "64.00", period: "2026-05" }],
+        total: "64.00",
+      },
+    ],
+    errors: [],
+    from_date: "2026-05-01",
     ok: true,
-    report: {
-      currency: "USD",
-      envelopes: [
-        {
-          name: "Groceries",
-          points: [
-            { amount: "412.37", period: "2026-05" },
-            { amount: "388.10", period: "2026-06" },
-          ],
-          total: "800.47",
-        },
-        {
-          name: "Transport",
-          points: [{ amount: "64.00", period: "2026-05" }],
-          total: "64.00",
-        },
-      ],
-      errors: [],
-      from_date: "2026-05-01",
-      ok: true,
-      period: "month",
-      periods: ["2026-05", "2026-06", "2026-07"],
-      to_date: "2026-07-30",
-      total: "864.47",
-      unmapped_accounts: ["Expenses:Unknown"],
-      unmapped_total: "1204.11",
-      warnings: [],
-    },
+    period: "month",
+    periods: ["2026-05", "2026-06", "2026-07"],
     summary: "Spending by envelope…",
+    to_date: "2026-07-30",
+    total: "864.47",
+    unmapped_accounts: ["Expenses:Unknown"],
+    unmapped_total: "1204.11",
+    warnings: [],
   };
 
   it("flattens the per-envelope series into one row per cell", () => {
@@ -220,7 +194,7 @@ describe("toSpendingReport", () => {
   });
 
   it("falls back to the requested window when the sidecar omits it", () => {
-    const report = toSpendingReport({ report: { envelopes: [] } }, requested);
+    const report = toSpendingReport({ envelopes: [] }, requested);
     assert.equal(report.from, "2026-05-01");
     assert.equal(report.to, "2026-07-30");
     assert.equal(report.granularity, "month");
@@ -249,19 +223,15 @@ describe("toTransactionSearch", () => {
   it("maps TransactionSearch.to_dict() through the envelope", () => {
     const search = toTransactionSearch(
       {
+        errors: [],
+        limit: 20,
+        matches: [match],
         ok: true,
-        results: {
-          errors: [],
-          limit: 20,
-          matches: [match],
-          ok: true,
-          query: "whole foods",
-          shown: 1,
-          total: 1,
-          truncated: false,
-          warnings: [],
-        },
+        query: "whole foods",
         summary: "1 match",
+        total: 1,
+        truncated: false,
+        warnings: [],
       },
       "whole foods"
     );
@@ -274,7 +244,7 @@ describe("toTransactionSearch", () => {
 
   it("keeps a null simplefin_id, which ledger-native entries have", () => {
     const search = toTransactionSearch(
-      { results: { matches: [{ ...match, simplefin_id: null }] } },
+      { matches: [{ ...match, simplefin_id: null }] },
       "q"
     );
     assert.equal(search.matches[0].simplefin_id, null);
@@ -282,7 +252,7 @@ describe("toTransactionSearch", () => {
 
   it("reports truncation so the UI can say the list is partial", () => {
     const search = toTransactionSearch(
-      { results: { matches: [match], shown: 1, total: 87, truncated: true } },
+      { matches: [match], total: 87, truncated: true },
       "q"
     );
     assert.equal(search.truncated, true);
@@ -291,7 +261,7 @@ describe("toTransactionSearch", () => {
   });
 
   it("echoes the requested query when the sidecar omits it", () => {
-    const search = toTransactionSearch({ results: { matches: [] } }, "pg&e");
+    const search = toTransactionSearch({ matches: [] }, "pg&e");
     assert.equal(search.query, "pg&e");
   });
 });
@@ -299,26 +269,31 @@ describe("toTransactionSearch", () => {
 describe("toAllocation", () => {
   const requested = { currency: "USD", envelope: "Groceries" };
 
-  it("maps AllocateResult.to_dict() for an accepted allocation", () => {
+  it("maps AllocateResponse for an accepted allocation", () => {
     const allocation = toAllocation(
       {
-        ok: true,
-        result: {
-          allocated_on: "2026-07-30",
-          amount: "250.00",
-          available: "1312.44",
-          currency: "USD",
-          directive:
-            '2026-07-30 custom "envelope" "allocate" "Groceries" 250.00 USD',
-          envelope: "Groceries",
-          errors: [],
-          known_envelopes: ["Groceries", "Transport"],
+        allocated_on: "2026-07-30",
+        amount: "250.00",
+        available: "1312.44",
+        commit: {
+          committed: true,
+          files: ["ledger/budget.beancount"],
+          message: "Allocate 250.00 USD to Groceries",
           ok: true,
-          over_allocated: false,
-          path: "ledger/budget.beancount",
+          sha: "9f2c1ab",
           warnings: [],
         },
+        currency: "USD",
+        directive:
+          '2026-07-30 custom "envelope" "allocate" "Groceries" 250.00 USD',
+        envelope: "Groceries",
+        errors: [],
+        known_envelopes: ["Groceries", "Transport"],
+        ok: true,
+        over_allocated: false,
+        path: "ledger/budget.beancount",
         summary: "allocated 250.00 USD to Groceries",
+        warnings: [],
       },
       requested
     );
@@ -329,20 +304,53 @@ describe("toAllocation", () => {
     assert.equal(allocation.allocated_on, "2026-07-30");
   });
 
+  it("carries the commit sha, which is how an allocation gets undone", () => {
+    // Git is the undo system (PLAN.md §9), so the sha is the one field the UI
+    // needs in order to tell someone what to revert.
+    //
+    // `commit` is also the field that broke the mapping this file previously
+    // had: it is the only object-valued property on the response, and the old
+    // heuristic — "the payload is the first object that is not ok/summary" —
+    // returned the git commit *as* the allocation. Every amount then read 0.
+    const allocation = toAllocation(
+      {
+        amount: "250.00",
+        commit: {
+          committed: true,
+          files: ["ledger/budget.beancount"],
+          message: "Allocate 250.00 USD to Groceries",
+          ok: true,
+          sha: "9f2c1ab",
+          warnings: [],
+        },
+        ok: true,
+      },
+      requested
+    );
+
+    assert.equal(allocation.amount, "250.00", "the commit is not the payload");
+    assert.equal(allocation.commit?.sha, "9f2c1ab");
+    assert.equal(allocation.commit?.committed, true);
+  });
+
+  it("carries a null commit when nothing was written", () => {
+    assert.equal(
+      toAllocation({ commit: null, ok: false }, requested).commit,
+      null
+    );
+  });
+
   it("carries ok:false and the reason for a refused allocation", () => {
     // The sidecar answers 200 with ok:false for an unknown envelope, the same
     // way /verify reports a failing ledger. This is the payload the tool turns
     // into a message the model can relay.
     const allocation = toAllocation(
       {
+        amount: "0",
+        envelope: "Food",
+        errors: ['no envelope named "Food"'],
+        known_envelopes: ["Groceries", "Transport"],
         ok: false,
-        result: {
-          amount: "0",
-          envelope: "Food",
-          errors: ['no envelope named "Food"'],
-          known_envelopes: ["Groceries", "Transport"],
-          ok: false,
-        },
         summary: "allocation failed",
       },
       { currency: "USD", envelope: "Food" }
@@ -358,12 +366,12 @@ describe("toAllocation", () => {
     // succeeded, we must not say it did.
     assert.equal(toAllocation({}, requested).ok, false);
     assert.equal(toAllocation(null, requested).ok, false);
-    assert.equal(toAllocation({ result: {} }, requested).ok, false);
+    assert.equal(toAllocation({ summary: "" }, requested).ok, false);
   });
 
   it("flags an over-allocation without refusing it", () => {
     const allocation = toAllocation(
-      { result: { available: "-40.00", ok: true, over_allocated: true } },
+      { available: "-40.00", ok: true, over_allocated: true },
       requested
     );
     assert.equal(allocation.ok, true);

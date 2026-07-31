@@ -148,7 +148,21 @@ def _coerce_amount(amount: Decimal | str | float) -> tuple[Decimal, list[str]]:
 
 
 def _validate_currency(currency: str) -> str:
-    normalized = (currency or DEFAULT_CURRENCY).strip()
+    """`currency` as a valid beancount currency, defaulting when unsaid.
+
+    Strip *before* falling back, so `None`, `""` and `"   "` all mean the
+    same thing: the caller did not name a currency, and gets the default.
+    Whitespace-only deliberately normalizes rather than being refused -- this
+    is reached from the one write tool the chat layer exposes, an 8B model
+    picks the argument (§3.3), and a model emitting `" "` where it meant to
+    omit the field is an ordinary failure for one. Losing a valid allocation
+    to a stray space is the worse outcome.
+
+    Anything non-empty that is not a currency is still an error, and is
+    caught here rather than at parse time so it comes back as a reason
+    instead of a corrupted file that has to be rolled back.
+    """
+    normalized = (currency or "").strip() or DEFAULT_CURRENCY
     if not _CURRENCY_RE.match(normalized):
         raise ValueError(f"{normalized!r} is not a valid beancount currency")
     return normalized

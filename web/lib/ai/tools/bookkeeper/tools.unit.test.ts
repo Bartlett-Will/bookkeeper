@@ -44,6 +44,7 @@ const allocationAccepted: AllocationConfirmation = {
   allocated_on: "2026-07-30",
   amount: "250.00",
   available: "1312.44",
+  commit: null,
   currency: "USD",
   directive: "…",
   envelope: "Groceries",
@@ -93,6 +94,7 @@ function fakeClient(overrides: Partial<BookkeeperClient> = {}): {
           points: [],
           to: input.to,
           total: "0",
+          unmapped_accounts: [],
           unmapped_total: "0",
           warnings: [],
         },
@@ -116,7 +118,8 @@ function fakeClient(overrides: Partial<BookkeeperClient> = {}): {
         ok: true,
       });
     },
-    startSync: () => Promise.resolve({ data: { job_id: "job-1" }, ok: true }),
+    startSync: () =>
+      Promise.resolve({ data: { job_id: "job-1", started: true }, ok: true }),
     ...overrides,
   };
   return { calls, client };
