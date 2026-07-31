@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import subprocess
 
 from bookkeeper import paths
 from bookkeeper.ingest.sync import run_sync
@@ -504,3 +505,68 @@ def test_clean_rebuild_matches_a_resync_byte_for_byte(bookkeeper_root, httpx_moc
         "generated file is still merging with stale prior content instead "
         "of being rewritten wholesale"
     )
+
+
+def _git(args: list[str], cwd) -> str:
+    out = subprocess.run(
+        ["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True
+    )
+    return out.stdout
+
+
+def _commit_count(root) -> int:
+    return int(_git(["rev-list", "--count", "HEAD"], root).strip())
+
+
+def test_a_sync_that_adds_transactions_commits_them(bookkeeper_root, httpx_mock):
+    """PLAN.md §9 makes git the undo system "after each sync and each accepted
+    batch". Only the batch half was wired for most of Phase 4: `review`,
+    `apply` and `allocate` committed and `sync` did not, so a sync nobody
+    confirmed afterwards left the ledger written but with nothing to revert to.
+
+    A real repo is required or this passes trivially -- `commit_ledger` treats
+    a missing repo as a warning and carries on, so against a repo-less fixture
+    "it committed" and "it could not possibly commit" look identical. Local
+    identity because a fresh machine has no global one, and that failure would
+    also surface only as a warning.
+    """
+    _seed_access_url(bookkeeper_root)
+    httpx_mock.add_response(url=ACCESS_URL + "/accounts", method="GET", json=SAMPLE_PAYLOAD)
+    _git(["init", "-q"], bookkeeper_root)
+    _git(["config", "user.email", "harness@example.invalid"], bookkeeper_root)
+    _git(["config", "user.name", "Sync harness"], bookkeeper_root)
+    _git(["add", "-A"], bookkeeper_root)
+    _git(["commit", "-qm", "fixture"], bookkeeper_root)
+    before = _commit_count(bookkeeper_root)
+
+    result = run_sync()
+
+    assert result.ok
+    assert result.transactions_added == 3
+    assert result.commit is not None
+    assert result.commit.committed is True
+    assert _commit_count(bookkeeper_root) == before + 1
+    assert _git(["status", "--short", "--", "ledger"], bookkeeper_root).strip() == ""
+
+
+def test_a_sync_that_adds_nothing_makes_no_commit(bookkeeper_root, httpx_mock):
+    """A rerun writes no file (see the module docstring on idempotency), so an
+    empty commit would be noise in the very history someone reverts through."""
+    _seed_access_url(bookkeeper_root)
+    httpx_mock.add_response(
+        url=ACCESS_URL + "/accounts", method="GET", json=SAMPLE_PAYLOAD, is_reusable=True
+    )
+    _git(["init", "-q"], bookkeeper_root)
+    _git(["config", "user.email", "harness@example.invalid"], bookkeeper_root)
+    _git(["config", "user.name", "Sync harness"], bookkeeper_root)
+    _git(["add", "-A"], bookkeeper_root)
+    _git(["commit", "-qm", "fixture"], bookkeeper_root)
+
+    run_sync()
+    after_first = _commit_count(bookkeeper_root)
+
+    second = run_sync()
+
+    assert second.transactions_added == 0
+    assert second.commit is None
+    assert _commit_count(bookkeeper_root) == after_first

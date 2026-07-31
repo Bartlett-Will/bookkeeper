@@ -1,7 +1,9 @@
 # Phase 4 — exit criteria, verified
 
 Measured 2026-07-31 on branch `phase-4-chat`, against commit `68999cb`
-("Unit-test the four modules that had none").
+("Unit-test the four modules that had none") and re-measured against
+`1594986` ("Refuse unknown fields on request bodies") after the branch moved
+under me. See "Provenance" at the end.
 
 > **Every number in this document was produced by a run on this machine.**
 > Nothing here is projected, inferred from reading the code, or carried over
@@ -20,16 +22,21 @@ Measured 2026-07-31 on branch `phase-4-chat`, against commit `68999cb`
 Two defects found in the process, neither of which blocks a criterion. Both
 are reported in "Findings" below and have **not** been fixed by me.
 
+One measurement here is **not** an exit criterion and is reported because it
+closes an open question §5.3 left and bears on §7's top risk: tool-selection
+accuracy at the full six-tool surface. See "Tool selection at six tools".
+
 ## The headline number
 
 **Approving 40 transactions through `POST /api/bookkeeper/review/confirm`
-produced 0 LLM calls.** Measured twice, on two independently generated fixture
-trees:
+produced 0 LLM calls.** Measured three times, on three independently generated
+fixture trees, across two commits:
 
-| run | fixture | approved | confirmed | LLM calls at the proxy | total requests at the proxy |
-|---|---|---|---|---|---|
-| 1 | `fixture` | 40 | 40 | **0** | 0 |
-| 2 | `fixture2` | 40 | 40 | **0** | 0 |
+| run | commit | fixture | approved | confirmed | LLM calls at the proxy | total requests at the proxy |
+|---|---|---|---|---|---|---|
+| 1 | `68999cb` | `fixture` | 40 | 40 | **0** | 0 |
+| 2 | `68999cb` | `fixture2` | 40 | 40 | **0** | 0 |
+| 3 | `1594986` | `fixture3` | 40 | 40 | **0** | 0 |
 
 Not "zero chat completions" — **zero requests of any kind reached Ollama**
 during the approval window, inference or metadata. The proxy's audit log for
@@ -73,6 +80,7 @@ requires the counter to move:
 |---|---|---|
 | 1 | 2 | 0 |
 | 2 | 2 | 0 |
+| 3 | 2 | 0 |
 
 The counter moved to 2 and then to 0 in the same process, against the same
 proxy, minutes apart. **The zero is a measurement, not a disconnected wire.**
@@ -190,6 +198,83 @@ memory tier misses it. This is a real limit of the shipped design and is pinned
 by `test_the_generalization_stops_where_normalization_stops`. Reporting
 criterion 2 as an unqualified "memory generalizes" would overstate what was
 measured.
+
+## Tool selection at six tools — not an exit criterion, but it closes §5.3's open question
+
+§5.3's amendment measured `qwen3:8b` choosing correctly when given **two**
+tools and concluded "the shallow single-step bet holds at 8B". Phase 4 ships
+**six**, and §7's top risk ("8B model too unreliable for conversational tool
+calling", severity **High**) names shrinking the tool surface as the fallback
+if it degrades. So the six-tool number had to be measured.
+
+Measured with `web/scripts/measure-tool-selection.ts`, which drives the
+**real** `bookkeeperTools` definitions and the **real** system prompt through
+the app's own provider path, binding the tools to a recording stub so
+`allocate_to_envelope` cannot reach the ledger during a benchmark:
+
+| set | result | latency |
+|---|---|---|
+| Standard — 18 tool cases (3 per tool) + 4 no-tool cases | **22/22 (100%)** | 0.95–4.9 s |
+| Hard — 10 deliberately ambiguous phrasings | **10/10 defensible (100%)** | 1.8–7.6 s |
+
+The two results that bear most directly on the design:
+
+- **`"why did the sync fail yesterday"` answered in prose and did not sync.**
+  This is the pre-routing false positive that §5.3 rule 4's interrogative veto
+  exists to prevent, and the model declines it independently of the
+  deterministic matcher. Defence in depth, confirmed rather than assumed.
+- **`"sync and then show me what needs reviewing"` picked one tool, not two.**
+  Chaining pressure is the §3.3 failure mode that `MAX_STEPS_PER_TURN = 2`
+  caps; the model did not attempt the chain in the first place.
+
+One result worth flagging rather than banking, because it concerns the only
+tool that writes: **`"I want groceries to be 400 a month"` invoked
+`allocate_to_envelope`.** The harness counts this correct — its `expected`
+lists both the allocation and prose as defensible, which is honest, since the
+sentence does name an envelope and an amount. But of the two defensible
+answers the model took the one that *writes to the ledger*, on a phrasing that
+is a wish rather than an order. Nothing was harmed here (allocation is
+additive, committed, and revertible per §9), and the tool description already
+says "never guess the amount or the envelope" — it guessed neither. It is
+noted because "100% on the hard set" should not be read as "the write tool is
+conservative"; it is the one case in the set where a stricter reading was
+available and not taken.
+
+### What this measurement is worth
+
+Both sets were **hand-written by the team lead, who also wrote the tool
+descriptions under test**. That makes the standard set partly a measure of its
+own tuning rather than an independent test — the script's own comments say so,
+which is why the hard set exists. 32 prompts is a demonstration, not a
+benchmark: it establishes that the six descriptions are **disjoint enough to be
+separable**, not that the §3.3 failure mode is absent. A different author's
+prompts would very likely find worse cases, and this is the same caveat
+`docs/phase3-accuracy.md` makes about its synthetic corpus.
+
+§3.3's ~13% failure figure for Qwen3-8B is also for **multi-step agentic
+tasks**, which is not what this measures and not what the app does — every tool
+here is single-step by construction (§5.3). The two numbers are not comparable
+and neither refutes the other.
+
+**Bearing on §7's top risk:** reduced, not eliminated. The evidence says the
+six-tool surface does not visibly degrade selection on 32 prompts, so the
+"shrink to 3 tools" fallback is not currently indicated. It does not say the
+model is reliable in a sense that would justify removing the §5.3 guardrails —
+and the guardrail that matters most, clicks bypassing the model entirely, is
+the one the exit criterion measures above at **0 LLM calls**.
+
+An earlier throwaway measurement (12/12 positive, 6/6 negative) was taken
+against hand-copied tool descriptions with **no system prompt**, via Ollama's
+`/api/chat` directly. It agrees in direction and is superseded here by the
+committed script, which exercises the shipped descriptions and prompt. The
+numbers in the table above are from my own runs, not transcribed.
+
+Reproduce:
+
+```bash
+cd web && pnpm exec tsx scripts/measure-tool-selection.ts          # standard
+cd web && pnpm exec tsx scripts/measure-tool-selection.ts --hard   # ambiguous
+```
 
 ## Findings
 
@@ -337,13 +422,24 @@ connected. §5.3 rule 2 holds where it matters most.
   accuracy figure from that data means anything. Criterion 1 is a claim about
   the *loop*, not about whether the guesses were good.
 
-**Provenance.** Commit `68999cb` was measured; the branch has since moved to
-`98b3966`. Every path involved — the confirm route, the chat route,
-`pre-route.ts`, the review-queue route, and `categorize/review.py` — is
-byte-identical between the two, so the results carry forward. The intervening
-commits touch envelope allocation and tool unit tests only. There were also
-uncommitted working-tree edits under `web/lib/` at the time of the run; those
-were **not** included, since the worktree was checked out at the commit.
+**Provenance.** Criteria 1 and 2, and runs 1–2 of criterion 3, were measured at
+`68999cb`. The branch then moved to `1594986`, which edits
+`sidecar/bookkeeper/api.py` — a file squarely on the measured path, since it
+serves the confirm endpoint. The route handlers themselves (confirm, chat,
+`pre-route.ts`, review-queue) and `categorize/review.py` are byte-identical
+across those commits, but `api.py` is not, so **criterion 3 was re-run at
+`1594986` rather than assumed to carry forward** (run 3 above, still 0). That
+commit adds strict rejection of unknown request-body fields, which is exactly
+the kind of change that could have broken a batch confirm; it did not.
+
+Criteria 1 and 2 were **not** re-run at `1594986`, so they stand as measured at
+`68999cb`. Both exercise the same confirm path that run 3 re-confirms, and the
+`api.py` diff is request-body validation rather than loop behaviour, but that
+is an argument and not a measurement, and it is offered as one.
+
+Uncommitted working-tree edits under `web/lib/` existed during runs 1–2 and
+were **not** included, since each run was made from a worktree checked out at a
+commit.
 
 The real `ledger/` was never written to. Verified with
 `git status --short -- ledger/ data/memory.json`, clean, after every run.

@@ -20,6 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from bookkeeper import paths
+from bookkeeper.categorize.gitcommit import CommitResult, commit_ledger
 from bookkeeper.ingest.dedup import existing_opening_balance_accounts, existing_simplefin_keys
 from bookkeeper.ingest.normalize import (
     ASSET_ACCOUNT_OPEN_DATE,
@@ -61,6 +62,7 @@ class SyncResult:
     balances_written: int = 0
     opening_balances_written: int = 0
     errors: list[str] = field(default_factory=list)
+    commit: CommitResult | None = None
 
     def render(self) -> str:
         if not self.ok:
@@ -77,6 +79,8 @@ class SyncResult:
             f"balance assertions now in balances.beancount: {self.balances_written}",
             f"opening balance plugs written: {self.opening_balances_written}",
         ]
+        if self.commit is not None:
+            lines.append(self.commit.render())
         if self.errors:
             lines.append("warnings:")
             lines.extend(f"  - {e}" for e in self.errors)
@@ -236,6 +240,23 @@ def run_sync(since: str | None = None, demo: bool = False) -> SyncResult:
     errors = [f"{e.code}: {e.msg}" for e in account_set.errlist if e.msg]
     errors.extend(account_set.errors)
 
+    # PLAN.md §9 makes git the undo system, "after each sync and each accepted
+    # batch". Only the batch half was ever wired: `review`, `apply` and
+    # `allocate` all commit, and `sync` did not -- so a sync that no one
+    # confirmed afterwards left the ledger written but uncommitted, and there
+    # was nothing to revert to. The files a sync writes are exactly the ones
+    # that are hardest to reconstruct by hand, since they came from a rate-
+    # limited feed that will not serve the same window twice.
+    #
+    # Committed only when something actually changed: a rerun that adds
+    # nothing touches no file (see the module docstring on idempotency), and
+    # an empty commit for a no-op sync would be noise in the undo history.
+    commit_result = None
+    if added or opening_written:
+        commit_result = commit_ledger(
+            f"Sync {added} transaction(s) from {len(account_set.accounts)} account(s)"
+        )
+
     return SyncResult(
         ok=True,
         accounts_synced=len(account_set.accounts),
@@ -245,4 +266,5 @@ def run_sync(since: str | None = None, demo: bool = False) -> SyncResult:
         balances_written=len(balances),
         opening_balances_written=opening_written,
         errors=errors,
+        commit=commit_result,
     )
