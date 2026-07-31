@@ -14,6 +14,12 @@ future chat tools is a design requirement (PLAN.md §9), not an afterthought.
     review   -> bookkeeper.categorize.review:review_queue(limit=None) -> ReviewQueue
     eval     -> bookkeeper.categorize.evaluate:run_eval(corpus=None, use_llm=False)
                      -> EvalReport
+    search   -> bookkeeper.reports.search:search_transactions(q, limit=None)
+                     -> TransactionSearch
+    report   -> bookkeeper.reports.spending:spending_report(from_date=None, to_date=None,
+                     period="month") -> SpendingReport
+    allocate -> bookkeeper.envelope.allocate:allocate_to_envelope(envelope, amount,
+                     currency="USD", allocated_on=None) -> AllocateResult
     serve    -> bookkeeper.api:serve(host, port)
 
 Each result object must expose `.ok: bool` and `.render() -> str` so this dispatcher
@@ -83,6 +89,43 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+def _cmd_search(args: argparse.Namespace) -> int:
+    from bookkeeper.reports.search import search_transactions
+
+    result = search_transactions(args.query, limit=args.limit)
+    print(result.render())
+    return 0 if result.ok else 1
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    from bookkeeper.reports.spending import spending_report
+
+    # `spending_report` raises on an unparseable date rather than returning a
+    # failed result, because a caller that passed a date it cannot parse has
+    # no report to be given. Caught here so the CLI answers with a message
+    # instead of a traceback.
+    try:
+        report = spending_report(args.from_date, args.to, args.period)
+    except ValueError as exc:
+        print(f"report failed: {exc}")
+        return 1
+    print(report.render())
+    return 0 if report.ok else 1
+
+
+def _cmd_allocate(args: argparse.Namespace) -> int:
+    from bookkeeper.envelope.allocate import allocate_to_envelope
+
+    result = allocate_to_envelope(
+        args.envelope,
+        args.amount,
+        currency=args.currency,
+        allocated_on=args.on,
+    )
+    print(result.render())
+    return 0 if result.ok else 1
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from bookkeeper.api import serve
 
@@ -138,6 +181,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include the LLM tier (slow; requires Ollama). Off by default so CI stays hermetic.",
     )
     ev.set_defaults(func=_cmd_eval)
+
+    # PLAN.md §9: every operation the chat can invoke must also run headless.
+    # These three back `search_transactions`, `get_spending_report` and
+    # `allocate_to_envelope` (§5.3), so no capability exists only behind a
+    # model.
+    se = sub.add_parser("search", help="Search transactions by narration, payee or account")
+    se.add_argument("query", help="Free text; matched as a literal, not a regex")
+    se.add_argument("--limit", type=int, default=None, help="Show at most N matches")
+    se.set_defaults(func=_cmd_search)
+
+    rp = sub.add_parser("report", help="Show spending by envelope over time")
+    rp.add_argument("--from", dest="from_date", default=None, help="ISO date; inclusive")
+    rp.add_argument("--to", default=None, help="ISO date; inclusive")
+    rp.add_argument(
+        "--period",
+        default="month",
+        help="Granularity: month (default) or year",
+    )
+    rp.set_defaults(func=_cmd_report)
+
+    # Amounts stay strings all the way into `allocate_to_envelope`, which
+    # does its own `Decimal` conversion. `type=float` here would round the
+    # money before the module that cares about cents ever saw it.
+    al = sub.add_parser("allocate", help="Move money into an envelope")
+    al.add_argument("envelope", help="An envelope the ledger already maps an account to")
+    al.add_argument("amount", help="Positive amount, e.g. 125.50")
+    al.add_argument("--currency", default="USD")
+    al.add_argument("--on", default=None, help="ISO date the allocation is recorded under")
+    al.set_defaults(func=_cmd_allocate)
 
     r = sub.add_parser("serve", help="Run the FastAPI sidecar")
     r.add_argument("--host", default="127.0.0.1")
