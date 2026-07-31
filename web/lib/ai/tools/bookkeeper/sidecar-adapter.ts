@@ -1,7 +1,6 @@
 import "server-only";
 
 import {
-  type CallOptions,
   allocateToEnvelope as sidecarAllocate,
   getEnvelopes as sidecarGetEnvelopes,
   getReviewQueue as sidecarGetReviewQueue,
@@ -9,7 +8,13 @@ import {
   searchTransactions as sidecarSearchTransactions,
   startSync as sidecarStartSync,
 } from "@/lib/sidecar/client";
-import type { SidecarResult as TransportResult } from "@/lib/sidecar/contract";
+// Functions from `client`, types from `contract`. `contract.ts` carries no
+// `server-only`, so types stay importable from client components; reaching
+// them through `client.ts` would drag `server-only` into the browser bundle.
+import type {
+  CallOptions,
+  SidecarResult as TransportResult,
+} from "@/lib/sidecar/contract";
 import type { BookkeeperClient, EnvelopeReport, SidecarResult } from "./client";
 import {
   toAllocation,

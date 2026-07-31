@@ -1008,3 +1008,139 @@ def test_a_missing_module_degrades_to_one_503(method, path, module, monkeypatch)
     if resp.status_code == 503:
         assert "unavailable" in resp.json()["detail"]
     assert client.get("/health").status_code == 200
+
+
+# --- request validation ---------------------------------------------------
+
+
+def test_an_unknown_request_field_is_a_422_that_names_it(bookkeeper_root):
+    """The bug this closes: `date` instead of `allocated_on` returned 200 and
+    recorded *today*.
+
+    Pydantic's default `extra="ignore"` dropped the field silently, so a
+    caller asking to backdate an allocation got a wrong date written into a
+    financial record with nothing anywhere to say so. An 8B model picks these
+    arguments (§3.3) and a near-miss on a field name is exactly what one
+    emits.
+
+    The 422 must *name* the field. A bare "validation error" would leave a
+    model no better off than the silent drop -- it would know something was
+    wrong but not what to change.
+    """
+    resp = TestClient(app).post(
+        "/envelopes/allocate",
+        json={"envelope": "Groceries", "amount": "1.00", "date": "2026-07-22"},
+    )
+    assert resp.status_code == 422
+
+    detail = resp.json()["detail"]
+    offending = [d for d in detail if d["type"] == "extra_forbidden"]
+    assert offending, detail
+    assert offending[0]["loc"] == ["body", "date"], offending
+    assert "date" in str(detail)
+
+
+@pytest.mark.parametrize(
+    ("path", "body", "unknown"),
+    [
+        (
+            "/envelopes/allocate",
+            {"envelope": "Groceries", "amount": "1.00", "when": "2026-07-22"},
+            "when",
+        ),
+        (
+            "/review/confirm",
+            {"confirmations": [], "auto_commit": True},
+            "auto_commit",
+        ),
+        ("/sync/start", {"demo": True, "force": True}, "force"),
+        ("/categorize", {"apply": False, "dry_run": True}, "dry_run"),
+    ],
+)
+def test_every_request_body_refuses_unknown_fields(bookkeeper_root, path, body, unknown):
+    resp = TestClient(app).post(path, json=body)
+
+    assert resp.status_code == 422, resp.json()
+    assert any(d["loc"] == ["body", unknown] for d in resp.json()["detail"]), resp.json()
+
+
+def test_a_typo_inside_a_confirmation_is_caught_too(bookkeeper_root):
+    """The nested model matters most of all.
+
+    `simplefin_id` is the key the batch is matched on. Misspelled and
+    silently dropped, the confirmation would match nothing, and the user
+    would read "I approved 40 transactions and nothing happened" against
+    their own financial records.
+    """
+    resp = TestClient(app).post(
+        "/review/confirm",
+        json={
+            "confirmations": [
+                {
+                    "asset_account": "Assets:SimpleFIN:Checking",
+                    "simplefin_id": "TXN-1",
+                    "account": "Expenses:Food:Dining",
+                    "simplefin_ids": "TXN-2",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 422
+    assert any(
+        d["loc"] == ["body", "confirmations", 0, "simplefin_ids"] for d in resp.json()["detail"]
+    ), resp.json()
+
+
+def test_a_missing_required_field_is_still_named(bookkeeper_root):
+    resp = TestClient(app).post("/envelopes/allocate", json={"amount": "1.00"})
+
+    assert resp.status_code == 422
+    assert any(d["loc"] == ["body", "envelope"] for d in resp.json()["detail"]), resp.json()
+
+
+def test_the_declared_fields_are_all_still_accepted(fake_confirm, bookkeeper_root):
+    """The other half: forbidding extras must not reject a valid body.
+
+    Every optional field is sent explicitly, so a rename on our side that
+    silently narrowed the accepted set would fail here.
+    """
+    fake_confirm(_FakeConfirmResult(confirmed=1, learned=1))
+    client = TestClient(app)
+
+    confirm = client.post(
+        "/review/confirm",
+        json={
+            "confirmations": [
+                {
+                    "asset_account": "Assets:SimpleFIN:Checking",
+                    "simplefin_id": "TXN-1",
+                    "account": "Expenses:Food:Dining",
+                }
+            ]
+        },
+    )
+    assert confirm.status_code == 200, confirm.json()
+
+
+def test_forbidden_extras_are_declared_in_the_openapi_schema():
+    """So a generated client can refuse the field at compile time rather than
+    discovering it as a 422 at runtime."""
+    schemas = app.openapi()["components"]["schemas"]
+    for name in (
+        "AllocateRequest",
+        "ConfirmRequest",
+        "ConfirmationModel",
+        "SyncStartRequest",
+        "CategorizeRequest",
+        "SyncRequest",
+    ):
+        assert schemas[name].get("additionalProperties") is False, name
+
+
+def test_response_models_stay_permissive():
+    """Requests only. Forbidding extras on a response would turn a new field
+    in an upstream result dict into a 500 on an endpoint that could have
+    answered."""
+    schemas = app.openapi()["components"]["schemas"]
+    for name in ("AllocateResponse", "SyncStatusResponse", "ReviewQueueResponse"):
+        assert schemas[name].get("additionalProperties") is not False, name

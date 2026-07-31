@@ -373,8 +373,12 @@ class CountingProxy:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--port", type=int, default=11435, help="port to listen on (default 11435)")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--port", type=int, default=11435, help="port to listen on (default 11435)"
+    )
     parser.add_argument(
         "--upstream",
         default="http://127.0.0.1:11434",

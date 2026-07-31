@@ -62,7 +62,23 @@ export function failed<Kind extends string, Data>(
  * know them. §5.3 rule 1's mechanism is sound — a withheld number cannot be
  * transposed — but withholding alone converts a transposition into an
  * invention, which is worse. The model has to be told the numbers are absent,
- * not merely off-limits.
+ * not merely off-limits. Re-measured after the change: six turns, no figure.
+ *
+ * **Known residue, and the thing to watch in Phase 5.** Suppressing *numbers*
+ * did not suppress *claims*. The model now says things like "You're currently
+ * within your groceries budget" — no figure, but still an assertion about data
+ * it cannot see, and on the tree this was measured against every envelope was
+ * at zero, so it was not even true. Far less dangerous than a wrong dollar
+ * amount and left as-is for Phase 4.
+ *
+ * It gets more dangerous as reports get richer. "Your spending is trending
+ * down", "nothing looks unusual" and "you're on track" are all one short
+ * sentence, all unfalsifiable from the model's position, and all things a
+ * user would reasonably act on. If Phase 5 adds trend or outlier detection,
+ * the honest options are to give the model a *small* set of pre-computed
+ * qualitative facts it may repeat, or to drop the prose reply entirely and let
+ * the card speak. Do not solve it by adding more prohibitions to this string —
+ * the fabrication above is what that approach produced.
  */
 export function renderedByTheUi<Kind extends string, Data>(
   successText: string

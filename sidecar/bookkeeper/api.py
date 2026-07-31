@@ -40,7 +40,7 @@ import beancount
 from beancount import loader
 from beancount.core import realization
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from bookkeeper import paths
 from bookkeeper.envelope.compute import EnvelopeReport, coerce_asof, compute_envelope_state
@@ -108,7 +108,32 @@ _ledger_cache = _LedgerCache()
 app = FastAPI(title="bookkeeper sidecar")
 
 
-class SyncRequest(BaseModel):
+class StrictRequest(BaseModel):
+    """Base for every request body: an unknown field is a 422, not a shrug.
+
+    Pydantic's default is `extra="ignore"`, which silently drops a field it
+    does not recognise. For a financial write that is the worst available
+    behaviour: sending `date` instead of `allocated_on` to
+    `POST /envelopes/allocate` returned 200 and recorded *today*, so a
+    caller asking to backdate an allocation got a wrong date in the ledger
+    with nothing anywhere to say so.
+
+    An 8B model picks these arguments (§3.3) and a near-miss on a field name
+    is precisely what one emits. Every *other* bad argument to that endpoint
+    -- a bad currency, a negative amount, an invented envelope -- already
+    comes back refused with a reason; accepting an unknown field while
+    refusing those was an inconsistency that only read as deliberate if you
+    knew the pydantic default.
+
+    Requests only. Responses stay permissive: we construct those ourselves,
+    and forbidding extras there would turn a new field in an upstream result
+    dict into a 500 on an endpoint that could have answered.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SyncRequest(StrictRequest):
     since: str | None = None
     demo: bool = False
 
@@ -395,7 +420,7 @@ class CategorizeResultModel(BaseModel):
     warnings: list[str]
 
 
-class CategorizeRequest(BaseModel):
+class CategorizeRequest(StrictRequest):
     #: Default False, and deliberately so: a POST that rewrites the ledger
     #: unless you opt out is PLAN.md §7's top risk ("auto-apply silently
     #: corrupts the ledger"). Writing is opt-in here exactly as `--apply` is
@@ -543,7 +568,7 @@ def categorizable_accounts() -> CategorizableAccountsResponse:
 # --------------------------------------------------------------------------
 
 
-class ConfirmationModel(BaseModel):
+class ConfirmationModel(StrictRequest):
     """One human decision. Keyed on `(asset_account, simplefin_id)`.
 
     Both halves are required because SimpleFIN ids are unique per account,
@@ -556,7 +581,7 @@ class ConfirmationModel(BaseModel):
     account: str
 
 
-class ConfirmRequest(BaseModel):
+class ConfirmRequest(StrictRequest):
     #: A batch, always. §5.3 rule 2 has a human approving forty review cards,
     #: and that must be one ledger pass and one commit, not forty of each.
     #: A single confirmation is a batch of one.
@@ -644,7 +669,7 @@ def review_confirm(req: ConfirmRequest) -> ConfirmResponse:
 # --------------------------------------------------------------------------
 
 
-class SyncStartRequest(BaseModel):
+class SyncStartRequest(StrictRequest):
     since: str | None = None
     demo: bool = False
 
@@ -784,7 +809,7 @@ def sync_status(job_id: str) -> SyncStatusResponse:
 # --------------------------------------------------------------------------
 
 
-class AllocateRequest(BaseModel):
+class AllocateRequest(StrictRequest):
     envelope: str
     #: `Decimal`, never `float`. An 8B model picks this argument (§3.3) and
     #: it becomes a line in a budget file; `0.1` as a double is not `0.1`.

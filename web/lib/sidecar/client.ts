@@ -40,17 +40,13 @@ import type {
  * escaping mid-stream.
  */
 
-// Re-exported so a caller that imports the functions does not also have to
-// reach into `contract.ts` for the types in their signatures.
-export type {
-  CallOptions,
-  SidecarFailure,
-  SidecarFailureKind,
-  SidecarPort,
-  SidecarResult,
-  SidecarSuccess,
-} from "./contract";
-export { isSidecarSuccess } from "./contract";
+// Types are not re-exported from here on purpose. `contract.ts` is their one
+// home: it carries no `server-only`, so a client component can import a type
+// from it, and re-exporting the same names through this module would give
+// every type two import paths — one of which poisons any client component that
+// picks it. The two toolchains also disagree about how to spell such a
+// re-export (biome wants `export ... from`, Turbopack's SWC rejects it
+// alongside the local import), and having no re-export at all settles that.
 
 export const SIDECAR_BASE_URL =
   process.env.SIDECAR_BASE_URL ?? "http://127.0.0.1:8000";
@@ -223,7 +219,7 @@ export function getHealth(
 
 /**
  * Ledger and envelope integrity checks. A failing ledger comes back as a
- *successful* call carrying `ok: false` — the request worked and the findings
+ * successful call carrying `ok: false` — the request worked and the findings
  * are the payload. Phase 3 measured auto-apply off, so this currently reports
  * `Expenses:Unknown` as unmapped by design; that is not a transport failure
  * and must not be rendered as one.
