@@ -128,6 +128,8 @@ export type SpendingReport = {
    * for the wrong reason.
    */
   unmapped_total: string;
+  /** The accounts that `unmapped_total` came from — today, mostly `Expenses:Unknown`. */
+  unmapped_accounts: string[];
   warnings: string[];
   errors: string[];
 };
@@ -159,13 +161,27 @@ export type TransactionSearchResult = {
   errors: string[];
 };
 
+/** The git commit an allocation produced. Git is the undo system (PLAN.md §9). */
+export type AllocationCommit = {
+  ok: boolean;
+  committed: boolean;
+  /** What to `git revert`. The only reason this is carried to the UI. */
+  sha: string;
+  message: string;
+  files: string[];
+  warnings: string[];
+};
+
 /**
- * Mirrors `AllocateResult.to_dict()`.
+ * Mirrors `AllocateResponse`.
  *
  * `ok` is part of the payload rather than the transport: the sidecar answers
- * 200 with `ok: false` for a refused allocation (an unknown envelope name),
- * the same way `/verify` reports a failing ledger. The tool has to check it —
- * an HTTP 200 here does not mean anything was written.
+ * 200 with `ok: false` for a refused allocation — an unknown envelope, a
+ * non-positive amount, a bad currency, or a directive that would not parse —
+ * the same way `/verify` reports a failing ledger. The tool has to check it;
+ * an HTTP 200 here does not mean anything was written. Keeping refusals on the
+ * 200 path is also what preserves `known_envelopes`, which is what lets a
+ * model correct an invented envelope name without another round trip.
  */
 export type AllocationConfirmation = {
   ok: boolean;
@@ -178,8 +194,11 @@ export type AllocationConfirmation = {
   path: string;
   /** Unallocated cash after this allocation, or null when it could not be computed. */
   available: string | null;
+  /** Reported, never prevented — `verify` is what judges a budget. Still a successful write. */
   over_allocated: boolean;
   known_envelopes: string[];
+  /** Null when nothing was written. The endpoint always commits when it does write. */
+  commit: AllocationCommit | null;
   warnings: string[];
   errors: string[];
 };
@@ -202,8 +221,10 @@ export type BookkeeperClient = {
   }) => Promise<SidecarResult<TransactionSearchResult>>;
   allocateToEnvelope: (input: {
     envelope: string;
+    /** A decimal string, never a number — it is a `Decimal` and a JSON double would round it. */
     amount: string;
     currency: string;
-    date?: string;
+    /** Named for the wire field (`AllocateRequest.allocated_on`), not "date". */
+    allocated_on?: string;
   }) => Promise<SidecarResult<AllocationConfirmation>>;
 };
