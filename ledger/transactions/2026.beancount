@@ -22,8 +22,12 @@
   simplefin-mcc: "5812"
   simplefin-payee: "John's Fishin Shack"
   simplefin-memo: "JOHNS FISHIN SHACK BAIT"
+  bookkeeper-account: "Expenses:Food:Dining"
+  bookkeeper-tier: "human"
+  bookkeeper-confidence: "1.0000"
+  bookkeeper-decision: "confirmed"
   Assets:SimpleFIN:Checking   -19.96 USD
-  Expenses:Unknown
+  Expenses:Food:Dining
 
 2026-05-03 * "Grocery store"
   simplefin-id: "1777824000"
@@ -31,8 +35,12 @@
   simplefin-mcc: "5411"
   simplefin-payee: "Grocery store"
   simplefin-memo: "LOCAL GROCER STORE #1133"
+  bookkeeper-account: "Expenses:Food:Groceries"
+  bookkeeper-tier: "human"
+  bookkeeper-confidence: "1.0000"
+  bookkeeper-decision: "confirmed"
   Assets:SimpleFIN:Checking   -163.36 USD
-  Expenses:Unknown
+  Expenses:Food:Groceries
 
 2026-05-03 * "Fishing bait"
   simplefin-id: "1777795200"
@@ -40,8 +48,12 @@
   simplefin-mcc: "5812"
   simplefin-payee: "John's Fishin Shack"
   simplefin-memo: "JOHNS FISHIN SHACK BAIT"
+  bookkeeper-account: "Expenses:Food:Dining"
+  bookkeeper-tier: "human"
+  bookkeeper-confidence: "1.0000"
+  bookkeeper-decision: "confirmed"
   Assets:SimpleFIN:Savings   -15.50 USD
-  Expenses:Unknown
+  Expenses:Food:Dining
 
 2026-05-03 * "Grocery store"
   simplefin-id: "1777824000"
@@ -49,8 +61,12 @@
   simplefin-mcc: "5411"
   simplefin-payee: "Grocery store"
   simplefin-memo: "LOCAL GROCER STORE #1133"
+  bookkeeper-account: "Expenses:Food:Groceries"
+  bookkeeper-tier: "human"
+  bookkeeper-confidence: "1.0000"
+  bookkeeper-decision: "confirmed"
   Assets:SimpleFIN:Savings   -125.50 USD
-  Expenses:Unknown
+  Expenses:Food:Groceries
 
 2026-05-04 * "Fishing bait"
   simplefin-id: "1777881600"
@@ -58,8 +74,12 @@
   simplefin-mcc: "5812"
   simplefin-payee: "John's Fishin Shack"
   simplefin-memo: "JOHNS FISHIN SHACK BAIT"
+  bookkeeper-account: "Expenses:Food:Dining"
+  bookkeeper-tier: "human"
+  bookkeeper-confidence: "1.0000"
+  bookkeeper-decision: "confirmed"
   Assets:SimpleFIN:Checking   -26.62 USD
-  Expenses:Unknown
+  Expenses:Food:Dining
 
 2026-05-04 * "Grocery store"
   simplefin-id: "1777910400"
