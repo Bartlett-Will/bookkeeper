@@ -38,7 +38,10 @@ const CASES: ReadonlyArray<{ prompt: string; expected: Expected }> = [
 
   // get_envelope_status
   { expected: "get_envelope_status", prompt: "how am I doing on groceries?" },
-  { expected: "get_envelope_status", prompt: "how much is left for dining out" },
+  {
+    expected: "get_envelope_status",
+    prompt: "how much is left for dining out",
+  },
   { expected: "get_envelope_status", prompt: "am I over budget anywhere?" },
 
   // get_spending_report
@@ -56,7 +59,10 @@ const CASES: ReadonlyArray<{ prompt: string; expected: Expected }> = [
   },
 
   // search_transactions
-  { expected: "search_transactions", prompt: "did I ever shop at Whole Foods?" },
+  {
+    expected: "search_transactions",
+    prompt: "did I ever shop at Whole Foods?",
+  },
   {
     expected: "search_transactions",
     prompt: "find my transactions at the coffee place",
@@ -84,92 +90,227 @@ const CASES: ReadonlyArray<{ prompt: string; expected: Expected }> = [
   { expected: null, prompt: "who are you?" },
 ];
 
+/**
+ * The hard set: phrasings that sit on a boundary between two tools.
+ *
+ * `CASES` above is a fair test of whether the descriptions work, but it is not
+ * an *independent* one — the same person wrote both, so it partly measures its
+ * own tuning. These are the cases where two descriptions genuinely compete, and
+ * they are where a six-tool surface would degrade first if it were going to.
+ * Run with `--hard`.
+ *
+ * Where a phrasing is honestly ambiguous to a human, `expected` lists every
+ * defensible answer rather than pretending there is one right one.
+ */
+const HARD_CASES: ReadonlyArray<{
+  prompt: string;
+  expected: readonly Expected[];
+  note: string;
+}> = [
+  {
+    expected: ["get_spending_report", "get_envelope_status"],
+    note: "past period vs current state — the sharpest overlap in the set",
+    prompt: "how much did I spend on groceries last month?",
+  },
+  {
+    expected: ["get_envelope_status", "get_spending_report"],
+    note: "bare category name, no verb",
+    prompt: "groceries",
+  },
+  {
+    expected: ["search_transactions", "get_spending_report"],
+    note: "a named merchant plus a period — search and report both fit",
+    prompt: "what did I buy at Target in June?",
+  },
+  {
+    expected: ["get_envelope_status"],
+    note: "'left' is envelope language; must not become a spending report",
+    prompt: "how much do I have left?",
+  },
+  {
+    expected: ["allocate_to_envelope"],
+    note: "an allocation with no allocate/budget verb in it",
+    prompt: "move another 50 into dining out",
+  },
+  {
+    expected: ["allocate_to_envelope", null],
+    note: "amount and envelope present but phrased as a wish, not an order",
+    prompt: "I want groceries to be 400 a month",
+  },
+  {
+    expected: ["sync_accounts", "get_review_queue"],
+    note: "chaining pressure — must pick one, not attempt both",
+    prompt: "sync and then show me what needs reviewing",
+  },
+  {
+    expected: [null, "get_review_queue"],
+    note: "diagnostic question about a past run, not a command to sync",
+    prompt: "why did the sync fail yesterday",
+  },
+  {
+    expected: ["search_transactions"],
+    note: "'spent' is report language but a single merchant is a search",
+    prompt: "how much did I spend at Whole Foods",
+  },
+  {
+    expected: ["get_envelope_status", "get_review_queue"],
+    note: "maximally vague — any read tool is defensible, a write is not",
+    prompt: "show me everything",
+  },
+];
+
+/** The envelopes the stub pretends exist; `allocate_to_envelope` resolves names against these. */
+const ENVELOPE_NAMES = ["Groceries", "Dining Out", "Travel"];
+
+/** A successful port result. Synchronous underneath — nothing here does I/O. */
+function served<T>(data: T): Promise<{ ok: true; data: T }> {
+  return Promise.resolve({ data, ok: true as const });
+}
+
 /** Records what was asked for and returns plausible-shaped data. Never touches the sidecar. */
 function recordingClient(calls: string[]): BookkeeperClient {
   return {
-    allocateToEnvelope: async (input) => {
+    allocateToEnvelope: (input) => {
       calls.push("allocate_to_envelope");
-      return {
-        data: {
-          amount: input.amount,
-          available_after: "0.00",
-          committed: true,
-          currency: input.currency,
-          date: input.date ?? "2026-07-31",
-          directive: "",
-          envelope: input.envelope,
-        },
+      return served({
+        allocated_on: input.allocated_on ?? "2026-07-31",
+        amount: input.amount,
+        available: "0.00",
+        commit: null,
+        currency: input.currency,
+        directive: "",
+        envelope: input.envelope,
+        errors: [],
+        known_envelopes: ENVELOPE_NAMES,
         ok: true,
-      };
+        over_allocated: false,
+        path: "",
+        warnings: [],
+      });
     },
-    getEnvelopes: async () => {
+    getEnvelopes: () => {
       calls.push("get_envelope_status");
-      return {
-        data: {
-          asof: "2026-07-31",
-          available: "0.00",
-          budgeted_cash: "0.00",
-          envelopes: [
-            {
-              allocated: "0.00",
-              balance: "0.00",
-              name: "Groceries",
-              overspend: "0.00",
-              overspent: false,
-              spent: "0.00",
-            },
-            {
-              allocated: "0.00",
-              balance: "0.00",
-              name: "Dining Out",
-              overspend: "0.00",
-              overspent: false,
-              spent: "0.00",
-            },
-            {
-              allocated: "0.00",
-              balance: "0.00",
-              name: "Travel",
-              overspend: "0.00",
-              overspent: false,
-              spent: "0.00",
-            },
-          ],
-          summary: "",
-          total_envelope_balance: "0.00",
-          total_overspend: "0.00",
-        },
-        ok: true,
-      };
+      return served({
+        asof: "2026-07-31",
+        available: "0.00",
+        budgeted_cash: "0.00",
+        envelopes: ENVELOPE_NAMES.map((name) => ({
+          allocated: "0.00",
+          balance: "0.00",
+          name,
+          overspend: "0.00",
+          overspent: false,
+          spent: "0.00",
+        })),
+        summary: "",
+        total_envelope_balance: "0.00",
+        total_overspend: "0.00",
+      });
     },
-    getReviewQueue: async () => {
+    getReviewQueue: () => {
       calls.push("get_review_queue");
-      return { data: { entries: [], ok: true, summary: "" }, ok: true };
+      return served({
+        entries: [],
+        errors: [],
+        ok: true,
+        shown: 0,
+        total: 0,
+        warnings: [],
+      });
     },
-    getSpendingReport: async (input) => {
+    getSpendingReport: (input) => {
       calls.push("get_spending_report");
-      return {
-        data: {
-          buckets: [],
-          currency: "USD",
-          from: input.from,
-          to: input.to,
-        },
+      return served({
+        currency: "USD",
+        errors: [],
+        from: input.from,
+        granularity: "month",
         ok: true,
-      };
+        periods: [],
+        points: [],
+        to: input.to,
+        total: "0.00",
+        unmapped_accounts: [],
+        unmapped_total: "0.00",
+        warnings: [],
+      });
     },
-    searchTransactions: async (input) => {
+    searchTransactions: (input) => {
       calls.push("search_transactions");
-      return {
-        data: { matches: [], query: input.q, truncated: false },
+      return served({
+        errors: [],
+        limit: 20,
+        matches: [],
         ok: true,
-      };
+        query: input.q,
+        shown: 0,
+        total: 0,
+        truncated: false,
+        warnings: [],
+      });
     },
-    startSync: async () => {
+    startSync: () => {
       calls.push("sync_accounts");
-      return { data: { job_id: "bench" }, ok: true };
+      return served({ job_id: "bench", started: true });
     },
   };
+}
+
+/** One turn. Returns the tool the model chose, or `null` for prose. */
+async function choose(
+  model: ReturnType<typeof getLanguageModel>,
+  tools: ReturnType<typeof bookkeeperTools>,
+  prompt: string
+): Promise<{ chosen: string | null; elapsed: number }> {
+  const started = Date.now();
+  try {
+    const result = await generateText({
+      model,
+      prompt,
+      providerOptions: withThinking(false),
+      system: regularPrompt,
+      tools,
+    });
+    return {
+      chosen: result.toolCalls[0]?.toolName ?? null,
+      elapsed: Date.now() - started,
+    };
+  } catch (error) {
+    return {
+      chosen: `ERROR: ${error instanceof Error ? error.message : String(error)}`,
+      elapsed: Date.now() - started,
+    };
+  }
+}
+
+async function runHard(
+  model: ReturnType<typeof getLanguageModel>,
+  tools: ReturnType<typeof bookkeeperTools>
+) {
+  let defensible = 0;
+  for (const { prompt, expected, note } of HARD_CASES) {
+    // Sequential on purpose: one local Ollama instance serves every turn, so
+    // running these concurrently would only move the queue inside the server
+    // and would make the per-turn latency printed below meaningless.
+    // biome-ignore lint/performance/noAwaitInLoops: measuring per-turn latency against a single local model
+    const { chosen, elapsed } = await choose(model, tools, prompt);
+    const pass = expected.includes(chosen);
+    if (pass) {
+      defensible += 1;
+    }
+    console.log(
+      `${pass ? "OK  " : "MISS"}  ${String(elapsed).padStart(5)}ms  ` +
+        `${(chosen ?? "(none)").padEnd(22)} ${prompt}`
+    );
+    if (!pass) {
+      console.log(
+        `        expected one of [${expected.map((e) => e ?? "(no tool)").join(", ")}] — ${note}`
+      );
+    }
+  }
+  console.log(
+    `\n${defensible}/${HARD_CASES.length} defensible on the hard set (${((defensible / HARD_CASES.length) * 100).toFixed(1)}%)`
+  );
 }
 
 async function main() {
@@ -177,26 +318,19 @@ async function main() {
   const tools = bookkeeperTools(recordingClient(calls));
   const model = getLanguageModel("chat-model");
 
+  if (process.argv.includes("--hard")) {
+    await runHard(model, tools);
+    return;
+  }
+
   let correct = 0;
   const wrong: string[] = [];
 
   for (const { prompt, expected } of CASES) {
     calls.length = 0;
-    const started = Date.now();
-    let chosen: string | null = null;
-    try {
-      const result = await generateText({
-        model,
-        prompt,
-        providerOptions: withThinking(false),
-        system: regularPrompt,
-        tools,
-      });
-      chosen = result.toolCalls[0]?.toolName ?? null;
-    } catch (error) {
-      chosen = `ERROR: ${error instanceof Error ? error.message : String(error)}`;
-    }
-    const elapsed = Date.now() - started;
+    // Sequential for the same reason as `runHard` above.
+    // biome-ignore lint/performance/noAwaitInLoops: measuring per-turn latency against a single local model
+    const { chosen, elapsed } = await choose(model, tools, prompt);
 
     const pass = chosen === expected;
     if (pass) {

@@ -77,6 +77,56 @@ function nullableStr(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+/**
+ * A FastAPI 422 body, rewritten as one sentence naming the offending fields.
+ *
+ * The sidecar sets `extra="forbid"` on its request models, so a field this
+ * layer should not be sending is now a 422 rather than a silently dropped
+ * value — which is what turned a wrong date in a financial record into an
+ * error at the first request. The detail arrives as
+ * `[{type, loc: ["body", "date"], msg, input}]`, and `lib/sidecar` hands it on
+ * as raw JSON because its other consumers (the proxies, the logs) want the
+ * structure.
+ *
+ * The model does not. A JSON array in an 8B's context is precisely the loose
+ * error handling PLAN.md §3.3 names as the cause of invocation loops, so the
+ * field path is what gets extracted and the rest is dropped. `loc` keeps its
+ * array index for nested bodies — `["body","confirmations",0,"simplefin_id"]`
+ * becomes `confirmations[0].simplefin_id`, which tells you *which* of forty
+ * confirmations is wrong.
+ *
+ * Returns null when the body is not a recognisable validation error, so the
+ * caller falls back to the transport's own message rather than inventing one.
+ */
+export function describeValidationFailure(detail: unknown): string | null {
+  const items = objList(detail);
+  if (items.length === 0) {
+    return null;
+  }
+
+  const fields = items
+    .map((item) => {
+      const loc = Array.isArray(item.loc) ? item.loc : [];
+      // Drop the leading "body"/"query" segment: it names where the value came
+      // from, which the model can do nothing with.
+      const path = loc
+        .slice(1)
+        .map((part) => (typeof part === "number" ? `[${part}]` : `.${part}`))
+        .join("")
+        .replace(/^\./, "");
+      return path;
+    })
+    .filter((path) => path.length > 0);
+
+  if (fields.length === 0) {
+    return null;
+  }
+  const label = fields.length === 1 ? "field" : "fields";
+  return `the request was rejected because the ${label} ${fields.join(", ")} ${
+    fields.length === 1 ? "is" : "are"
+  } not accepted by the ledger service.`;
+}
+
 /** `SyncStartResponse`: `{job_id, kind, state, started}`. */
 export function toSyncStarted(body: unknown): SyncStarted {
   const data = record(body);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  describeValidationFailure,
   toAllocation,
   toReviewQueue,
   toSpendingReport,
@@ -377,5 +378,60 @@ describe("toAllocation", () => {
     assert.equal(allocation.ok, true);
     assert.equal(allocation.over_allocated, true);
     assert.equal(allocation.available, "-40.00");
+  });
+});
+
+describe("describeValidationFailure", () => {
+  // Since the sidecar set `extra="forbid"`, a field this layer should not send
+  // is a 422 rather than a silently dropped value — which is exactly what made
+  // the `date`/`allocated_on` bug invisible. These are real bodies from the
+  // running sidecar, not invented ones.
+
+  it("names the offending field instead of handing the model FastAPI's JSON", () => {
+    const detail = [
+      {
+        input: "2026-07-22",
+        loc: ["body", "date"],
+        msg: "Extra inputs are not permitted",
+        type: "extra_forbidden",
+      },
+    ];
+    const explained = describeValidationFailure(detail);
+    assert.match(explained ?? "", /date/);
+    assert.match(explained ?? "", /not accepted/);
+    // §3.3: a JSON array in an 8B's context is the loose error handling that
+    // produces invocation loops.
+    assert.ok(!explained?.includes("{"), explained ?? "");
+    assert.ok(!explained?.includes("extra_forbidden"), explained ?? "");
+  });
+
+  it("keeps the array index, so a 40-item batch says which element is wrong", () => {
+    const explained = describeValidationFailure([
+      {
+        loc: ["body", "confirmations", 0, "simplefin_id"],
+        msg: "Field required",
+        type: "missing",
+      },
+    ]);
+    assert.match(explained ?? "", /confirmations\[0\]\.simplefin_id/);
+  });
+
+  it("lists every offending field, not just the first", () => {
+    const explained = describeValidationFailure([
+      { loc: ["body", "date"], type: "extra_forbidden" },
+      { loc: ["body", "memo"], type: "extra_forbidden" },
+    ]);
+    assert.match(explained ?? "", /date/);
+    assert.match(explained ?? "", /memo/);
+    assert.match(explained ?? "", /fields/);
+  });
+
+  it("declines anything that is not a recognisable validation error", () => {
+    // The caller then falls back to the transport's own message rather than
+    // inventing an explanation.
+    assert.equal(describeValidationFailure(null), null);
+    assert.equal(describeValidationFailure([]), null);
+    assert.equal(describeValidationFailure("boom"), null);
+    assert.equal(describeValidationFailure([{ loc: ["body"] }]), null);
   });
 });

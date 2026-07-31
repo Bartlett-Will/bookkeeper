@@ -17,6 +17,7 @@ import type {
 } from "@/lib/sidecar/contract";
 import type { BookkeeperClient, EnvelopeReport, SidecarResult } from "./client";
 import {
+  describeValidationFailure,
   toAllocation,
   toReviewQueue,
   toSpendingReport,
@@ -44,6 +45,17 @@ function narrow<Raw, T>(
 ): SidecarResult<T> {
   if (result.outcome === "success") {
     return { data: project(result.data), ok: true };
+  }
+  // A 422 means this layer sent a body the sidecar's models reject — since
+  // `extra="forbid"` landed, that includes a field name we should not be
+  // sending at all. Naming the field beats handing the model FastAPI's JSON.
+  if (result.kind === "http" && result.status === 422) {
+    const explained = describeValidationFailure(
+      (result.detail as { detail?: unknown } | undefined)?.detail
+    );
+    if (explained) {
+      return { error: explained, ok: false };
+    }
   }
   return { error: result.message, ok: false };
 }
