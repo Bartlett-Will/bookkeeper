@@ -15,7 +15,9 @@
     "db:pull": "drizzle-kit pull",
     "db:check": "drizzle-kit check",
     "db:up": "drizzle-kit up",
-    "test": "export PLAYWRIGHT=True && pnpm exec playwright test"
+    "test": "export PLAYWRIGHT=True && pnpm exec playwright test",
+    "test:unit": "tsx --test \"lib/**/*.unit.test.ts\" \"components/**/*.unit.test.ts\"",
+    "sidecar:types": "tsx scripts/generate-sidecar-types.ts"
   },
   "dependencies": {
     "@ai-sdk/otel": "^1.0.15",
@@ -97,6 +99,7 @@
     "@types/react-dom": "^18",
     "babel-plugin-react-compiler": "^1.0.0",
     "drizzle-kit": "^0.31.10",
+    "openapi-typescript": "7.13.0",
     "postcss": "^8",
     "tailwindcss": "^4.3.2",
     "tsx": "^4.23.0",

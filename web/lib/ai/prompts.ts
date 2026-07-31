@@ -1,4 +1,3 @@
-import type { Geo } from "@vercel/functions";
 import type { ArtifactKind } from "@/components/chat/artifact";
 
 export const artifactsPrompt = `
@@ -44,39 +43,62 @@ CRITICAL RULES:
 - ONLY when the user explicitly asks for suggestions on an existing document
 `;
 
-export const regularPrompt = `You are a helpful assistant. Keep responses concise and direct.
+// Short on purpose, and it is the shortest thing in this file that is load-
+// bearing. PLAN.md §3.3: an 8B model's attention budget is the scarce resource
+// at tool-selection time, and every extra sentence here competes with the six
+// tool descriptions — which are where the actual routing information lives, and
+// which the model reads for free. A long prompt would make selection worse, not
+// better.
+//
+// Note what is *not* here: no list of the tools (they are already in the
+// request), no worked examples, no persona. Just the three failure modes that
+// cost real money — inventing a figure, inventing an account, and repeating
+// numbers the card already shows.
+export const regularPrompt = `You are a bookkeeping assistant for one person's local ledger.
 
-When asked to write, create, or build something, do it immediately. Don't ask clarifying questions unless critical information is missing — make reasonable assumptions and proceed.`;
+Use a tool to answer anything about their money. One tool per turn.
 
-export type RequestHints = {
-  latitude: Geo["latitude"];
-  longitude: Geo["longitude"];
-  city: Geo["city"];
-  country: Geo["country"];
-};
+You never see the figures a tool returns — they are rendered straight to the user as cards and charts. So never write an amount, balance, date, or account name: you do not have them, and anything you write would be invented. Answer in one short sentence with no numbers in it, or say nothing.`;
 
-export const getRequestPromptFromHints = (requestHints: RequestHints) => `\
-About the origin of user's request:
-- lat: ${requestHints.latitude}
-- lon: ${requestHints.longitude}
-- city: ${requestHints.city}
-- country: ${requestHints.country}
-`;
+/**
+ * Today's date, for the model.
+ *
+ * This replaces the template's geolocation hints, which existed for the weather
+ * tool and are gone with it — on localhost `geolocation()` returns undefined
+ * for every field anyway, so the prompt was spending four lines saying
+ * "city: undefined".
+ *
+ * A date earns its line where the coordinates did not. `get_spending_report`
+ * takes an optional `from`/`to` and defaults sensibly when they are omitted,
+ * so the model is never *required* to do date arithmetic — but when it decides
+ * to pass a range anyway, the alternative to telling it the date is a year
+ * inferred from its training data. In a ledger, a report silently scoped to
+ * the wrong year is worse than one scoped to the wrong month.
+ */
+export const getDatePrompt = (now: Date = new Date()) =>
+  `Today is ${now.toISOString().slice(0, 10)}.`;
 
 export const systemPrompt = ({
-  requestHints,
-  supportsTools,
+  includeArtifacts,
+  now,
 }: {
-  requestHints: RequestHints;
-  supportsTools: boolean;
+  /**
+   * Must track `activeTools`, not merely whether the model supports tools. The
+   * artifacts guidance is a page long and covers four tools that have nothing
+   * to do with bookkeeping; sending it while those tools are inactive would
+   * roughly triple the prompt to describe things the model cannot call, which
+   * is the §3.3 attention budget spent on pure distraction.
+   */
+  includeArtifacts: boolean;
+  now?: Date;
 }) => {
-  const requestPrompt = getRequestPromptFromHints(requestHints);
+  const base = `${regularPrompt}\n\n${getDatePrompt(now)}`;
 
-  if (!supportsTools) {
-    return `${regularPrompt}\n\n${requestPrompt}`;
+  if (!includeArtifacts) {
+    return base;
   }
 
-  return `${regularPrompt}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
+  return `${base}\n\n${artifactsPrompt}`;
 };
 
 export const codePrompt = `
@@ -123,9 +145,9 @@ export const titlePrompt = `Generate a short chat title (2-5 words) summarizing 
 Output ONLY the title text. No prefixes, no formatting.
 
 Examples:
-- "what's the weather in nyc" → Weather in NYC
-- "help me write an essay about space" → Space Essay Help
+- "how am I doing on groceries?" → Groceries Budget
+- "sync my accounts" → Account Sync
 - "hi" → New Conversation
-- "debug my python code" → Python Debugging
+- "what did I spend at whole foods in may" → Whole Foods Spending
 
 Never output hashtags, prefixes like "Title:", or quotes.`;

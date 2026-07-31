@@ -1,8 +1,8 @@
 import type { InferUITool, UIMessage } from "ai";
 import { z } from "zod";
 import type { ArtifactKind } from "@/components/chat/artifact";
+import type { bookkeeperTools } from "./ai/tools/bookkeeper";
 import type { createDocument } from "./ai/tools/create-document";
-import type { getWeather } from "./ai/tools/get-weather";
 import type { requestSuggestions } from "./ai/tools/request-suggestions";
 import type { updateDocument } from "./ai/tools/update-document";
 import type { Suggestion } from "./db/schema";
@@ -13,15 +13,28 @@ export const messageMetadataSchema = z.object({
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>;
 
-type weatherTool = InferUITool<typeof getWeather>;
 type createDocumentTool = InferUITool<ReturnType<typeof createDocument>>;
 type updateDocumentTool = InferUITool<ReturnType<typeof updateDocument>>;
 type requestSuggestionsTool = InferUITool<
   ReturnType<typeof requestSuggestions>
 >;
 
-export type ChatTools = {
-  getWeather: weatherTool;
+/**
+ * The six tools of PLAN.md §5.3, inferred as a set rather than one by one.
+ *
+ * Mapping over `bookkeeperTools`'s return type means adding a seventh tool
+ * cannot leave the UI without types for its parts — the map is derived from
+ * the registration, not maintained alongside it. `message.tsx` switches on
+ * `tool-<name>` and reads `part.output`, which is the
+ * `BookkeeperToolResult<Kind, Data>` discriminated union.
+ */
+type BookkeeperTools = {
+  [Name in keyof ReturnType<typeof bookkeeperTools>]: InferUITool<
+    ReturnType<typeof bookkeeperTools>[Name]
+  >;
+};
+
+export type ChatTools = BookkeeperTools & {
   createDocument: createDocumentTool;
   updateDocument: updateDocumentTool;
   requestSuggestions: requestSuggestionsTool;

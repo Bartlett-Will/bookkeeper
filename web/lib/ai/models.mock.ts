@@ -1,9 +1,22 @@
 import type { LanguageModel } from "ai";
 
+// The stand-in for Ollama under Playwright (see `providers.ts`, which swaps it
+// in on `isTestEnvironment`). It exists so the e2e suite never needs a model
+// loaded, and its job is to be deterministic, not clever.
+//
+// Every reply is one short sentence with no figures in it, which is the same
+// contract `tools/bookkeeper/result.ts` holds the real model to: the numbers
+// belong to the rendered card, not to the prose. A mock that recited a balance
+// would let a UI regression pass e2e by making the assistant *look* like it had
+// answered.
+
 const mockResponses: Record<string, string> = {
   default: "This is a mock response for testing.",
-  greeting: "Hello! How can I help you today?",
-  weather: "The weather in San Francisco is sunny and 72°F.",
+  envelopes: "Here are your envelope balances.",
+  greeting: "Hello! Ask me about your accounts, spending, or budget envelopes.",
+  review: "Here is what is waiting for review.",
+  spending: "Here is your spending for that period.",
+  sync: "I have started a sync in the background.",
 };
 
 const mockUsage = {
@@ -14,8 +27,20 @@ const mockUsage = {
 function getResponseForPrompt(prompt: unknown): string {
   const promptStr = JSON.stringify(prompt).toLowerCase();
 
-  if (promptStr.includes("weather") || promptStr.includes("temperature")) {
-    return mockResponses.weather;
+  // Ordered most specific first. `sync` leads because "sync" appears in
+  // messages that also mention transactions, and the more specific branch has
+  // to win.
+  if (promptStr.includes("sync") || promptStr.includes("refresh")) {
+    return mockResponses.sync;
+  }
+  if (promptStr.includes("review") || promptStr.includes("uncategorized")) {
+    return mockResponses.review;
+  }
+  if (promptStr.includes("envelope") || promptStr.includes("budget")) {
+    return mockResponses.envelopes;
+  }
+  if (promptStr.includes("spend") || promptStr.includes("spent")) {
+    return mockResponses.spending;
   }
   if (
     promptStr.includes("hello") ||

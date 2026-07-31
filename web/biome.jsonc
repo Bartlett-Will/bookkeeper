@@ -16,7 +16,15 @@
       "!components/elements",
       "!components/ui",
       "!lib/utils.ts",
-      "!hooks/use-mobile.ts"
+      "!hooks/use-mobile.ts",
+      // Tooling state, gitignored and not source. It lands here whenever a
+      // command is run with this directory as its cwd.
+      "!.omc",
+      // Generated from the sidecar's OpenAPI by `pnpm run sidecar:types`.
+      // Formatting or reordering it is churn that regeneration undoes, and
+      // the whole point of generating it is that it mirrors the server
+      // rather than our house style.
+      "!lib/sidecar/types.ts"
     ]
   },
   "linter": {

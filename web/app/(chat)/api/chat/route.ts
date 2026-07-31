@@ -1,4 +1,4 @@
-import { geolocation, ipAddress } from "@vercel/functions";
+import { ipAddress } from "@vercel/functions";
 import {
   convertToModelMessages,
   createUIMessageStream,
@@ -18,11 +18,16 @@ import {
   DEFAULT_CHAT_MODEL,
   getCapabilities,
 } from "@/lib/ai/models";
-import { type RequestHints, systemPrompt } from "@/lib/ai/prompts";
+import { preRouteMessage } from "@/lib/ai/pre-route";
+import { systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel, withThinking } from "@/lib/ai/providers";
+import {
+  BOOKKEEPER_TOOL_NAMES,
+  bookkeeperTools,
+} from "@/lib/ai/tools/bookkeeper";
+import { createSidecarBookkeeperClient } from "@/lib/ai/tools/bookkeeper/sidecar-adapter";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { editDocument } from "@/lib/ai/tools/edit-document";
-import { getWeather } from "@/lib/ai/tools/get-weather";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { isProductionEnvironment } from "@/lib/constants";
@@ -48,6 +53,49 @@ import { type PostRequestBody, postRequestBodySchema } from "./schema";
 export const maxDuration = 60;
 
 const HEALTH_CHECK_DELAY_MS = 9000;
+
+/**
+ * PLAN.md §5.6 keeps the artifacts feature but "initially unused". The four
+ * artifact tools stay registered below so the feature and its UI remain wired
+ * and upstream merges stay cheap, but they are not offered to the model.
+ *
+ * The reason is §3.3: small models are worst at deciding *which* tool to call,
+ * and every inactive tool is one fewer wrong answer available. A bookkeeping
+ * question that reaches `createDocument` produces a document instead of a
+ * balance, which reads as a broken app rather than a wrong tool.
+ *
+ * Flip this to `true`, and add the names to `activeTools`, when artifacts get a
+ * bookkeeping use — PLAN.md §5.6 names an editable monthly budget document.
+ */
+const ARTIFACT_TOOLS_ACTIVE = false;
+
+/**
+ * Every tool in this app is single-step by design (PLAN.md §5.3): each answers
+ * one question in one sidecar call and returns data for React to render. So a
+ * turn needs exactly two steps — the tool call, then the model's one-sentence
+ * reply to its result — and `2` is the value that permits that and nothing
+ * more.
+ *
+ * The template shipped `5`, which is actively harmful here rather than merely
+ * generous. §3.3 measures ~90% per-step accuracy compounding to roughly a 40%
+ * failure rate over five steps, and the failure it buys is specific: an 8B
+ * model that has no further work to do will re-invoke the tool it just called
+ * rather than stop, which §3.3 names as the invocation-loop failure mode. On
+ * `allocate_to_envelope` — the one tool that writes — a loop is a duplicated
+ * ledger entry. Capping at 2 makes that unreachable instead of unlikely.
+ */
+const MAX_STEPS_PER_TURN = 2;
+
+const ARTIFACT_TOOL_NAMES = [
+  "createDocument",
+  "editDocument",
+  "updateDocument",
+  "requestSuggestions",
+] as const;
+
+const activeToolNames = ARTIFACT_TOOLS_ACTIVE
+  ? [...BOOKKEEPER_TOOL_NAMES, ...ARTIFACT_TOOL_NAMES]
+  : [...BOOKKEEPER_TOOL_NAMES];
 
 function isModelStreamActivity(chunk: { type: string }) {
   return !["start", "start-step", "finish-step", "finish", "raw"].includes(
@@ -161,15 +209,6 @@ export async function POST(request: Request) {
       ];
     }
 
-    const { longitude, latitude, city, country } = geolocation(request);
-
-    const requestHints: RequestHints = {
-      city,
-      country,
-      latitude,
-      longitude,
-    };
-
     if (message?.role === "user") {
       await saveMessages({
         messages: [
@@ -192,6 +231,21 @@ export async function POST(request: Request) {
     const supportsTools = capabilities?.tools === true;
 
     const modelMessages = await convertToModelMessages(uiMessages);
+
+    // Deterministic pre-routing (PLAN.md §5.3 rule 4). "sync my accounts" and
+    // "show me the review queue" are commands, not questions, and we know
+    // exactly what they mean — so the model is not asked to work it out.
+    //
+    // This forces the *choice* rather than skipping the call. Rule 4's stated
+    // benefit is sidestepping "does this need a tool, and which?", which is the
+    // §3.3 decision small models are worst at, and `toolChoice` removes that
+    // decision completely: the tool runs, with no arguments to get wrong,
+    // whatever the model would have picked. It does still cost one inference,
+    // so it is not the "instant" half of rule 4 — bypassing `streamText`
+    // outright would need the route to synthesise the tool call and its UI
+    // parts by hand, which is a bigger change than this one is worth. Worth
+    // revisiting if turn latency proves to be the thing users feel.
+    const preRouted = isToolApprovalFlow ? null : preRouteMessage(message);
 
     const stream = createUIMessageStream({
       execute: async ({ writer: dataStream }) => {
@@ -253,17 +307,10 @@ export async function POST(request: Request) {
         };
 
         const result = streamText({
-          activeTools:
-            isReasoningModel && !supportsTools
-              ? []
-              : [
-                  "getWeather",
-                  "createDocument",
-                  "editDocument",
-                  "updateDocument",
-                  "requestSuggestions",
-                ],
-          instructions: systemPrompt({ requestHints, supportsTools }),
+          activeTools: supportsTools ? activeToolNames : [],
+          instructions: systemPrompt({
+            includeArtifacts: supportsTools && ARTIFACT_TOOLS_ACTIVE,
+          }),
           messages: modelMessages,
           model: getLanguageModel(chatModel),
           onAbort() {
@@ -285,19 +332,34 @@ export async function POST(request: Request) {
           // tool-calling turn — unusable for a chat turn. See
           // lib/ai/providers.ts#withThinking.
           providerOptions: withThinking(false),
-          stopWhen: isStepCount(5),
+          stopWhen: isStepCount(MAX_STEPS_PER_TURN),
           telemetry: {
             functionId: "stream-text",
             isEnabled: isProductionEnvironment,
           },
+          toolChoice: preRouted
+            ? { toolName: preRouted.toolName, type: "tool" }
+            : "auto",
           tools: {
+            // The six tools of PLAN.md §5.3, bound to the sidecar for this
+            // request. Building them per-request rather than at module scope
+            // is what lets the client carry `request.signal`: an abandoned
+            // chat turn then cancels its in-flight sidecar call instead of
+            // leaving the ledger service working on a result nobody will read.
+            //
+            // `POST /review/confirm` is deliberately absent — see
+            // `CONFIRM_IS_NOT_A_TOOL` in tools/bookkeeper/index.ts. Approving
+            // transactions is a button click straight to the API (§5.3 rule
+            // 2), and routing it through the model here would undo the phase.
+            ...bookkeeperTools(
+              createSidecarBookkeeperClient({ signal: request.signal })
+            ),
             createDocument: createDocument({
               dataStream,
               modelId: chatModel,
               session,
             }),
             editDocument: editDocument({ dataStream, session }),
-            getWeather,
             requestSuggestions: requestSuggestions({
               dataStream,
               modelId: chatModel,
