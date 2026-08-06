@@ -584,7 +584,9 @@ def test_to_dict_carries_an_undefined_relative_slope_as_null(half_year):
 def test_render_shows_the_verdicts_the_flags_and_what_was_declined(half_year):
     text = half_year.render()
 
-    assert "Spending trends, 2026-01-01 to 2026-06-30 (by month, USD)" in text
+    # 2026-06-11, not the requested 2026-06-30: the window is reported as the
+    # one actually analysed, clamped to the ledger's last transaction.
+    assert "Spending trends, 2026-01-01 to 2026-06-11 (by month, USD)" in text
     assert "up" in text and "down" in text and "flat" in text
     assert "insufficient_data" in text
     assert "Rent charged twice" in text
@@ -604,3 +606,193 @@ def test_render_reports_a_failure_with_its_reason(ledger):
 
     assert text.startswith("trends report failed:")
     assert "is after" in text
+
+
+# --- the window is the ledger's, not the caller's --------------------------
+#
+# A month before any data exists is not a month of zero spending; it is not a
+# month at all. `spending_report` emits a zero point for every period in the
+# requested range, which is right for a chart's x-axis and wrong for a
+# statistic over it: empty pre-ledger months followed by real ones are a
+# rising line. The bug this section pins produced a *confident* direction out
+# of an artefact of the window -- the exact inversion of what this module is
+# for, since abstention was both correct and available.
+
+FIXED_COST_LEDGER = """\
+option "operating_currency" "USD"
+
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Assets:Checking         USD
+2026-01-01 open Expenses:Housing:Rent   USD
+
+2026-01-01 custom "envelope" "map" "Expenses:Housing:Rent" "Rent"
+
+2026-01-01 * "Opening balance"
+  Assets:Checking                       90000.00 USD
+  Equity:Opening-Balances
+
+2026-01-03 * "Rent"
+  Assets:Checking                       -1000.00 USD
+  Expenses:Housing:Rent
+2026-02-03 * "Rent"
+  Assets:Checking                       -1000.00 USD
+  Expenses:Housing:Rent
+2026-03-03 * "Rent"
+  Assets:Checking                       -1000.00 USD
+  Expenses:Housing:Rent
+2026-04-03 * "Rent"
+  Assets:Checking                       -1000.00 USD
+  Expenses:Housing:Rent
+2026-05-03 * "Rent"
+  Assets:Checking                       -1000.00 USD
+  Expenses:Housing:Rent
+2026-06-03 * "Rent"
+  Assets:Checking                       -1000.00 USD
+  Expenses:Housing:Rent
+"""
+
+SHORT_FIXED_COST_LEDGER = """\
+option "operating_currency" "USD"
+
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Assets:Checking         USD
+2026-01-01 open Expenses:Housing:Rent   USD
+
+2026-01-01 custom "envelope" "map" "Expenses:Housing:Rent" "Rent"
+
+2026-01-01 * "Opening balance"
+  Assets:Checking                       90000.00 USD
+  Equity:Opening-Balances
+
+2026-01-03 * "Rent"
+  Assets:Checking                       -1000.00 USD
+  Expenses:Housing:Rent
+2026-02-03 * "Rent"
+  Assets:Checking                       -1000.00 USD
+  Expenses:Housing:Rent
+"""
+
+
+@pytest.fixture(scope="module")
+def fixed_cost_ledger():
+    return _load(FIXED_COST_LEDGER)
+
+
+@pytest.fixture(scope="module")
+def short_fixed_cost_ledger():
+    return _load(SHORT_FIXED_COST_LEDGER)
+
+
+def test_a_fixed_cost_is_never_rising_however_early_the_from(fixed_cost_ledger):
+    """Rent fixed at 1000.00 for six months. An early `from` used to prepend
+    twelve empty months and report `up` -- a confident claim about a fixed
+    cost, manufactured entirely by the window."""
+    result = report(fixed_cost_ledger, "2025-01-01", "2026-06-30")
+    rent = trend(result, "Rent")
+
+    assert rent.direction == "flat"
+    assert rent.slope == Decimal("0.00")
+    assert rent.periods_observed == 6
+
+
+def test_a_fixed_cost_is_never_falling_however_late_the_to(fixed_cost_ledger):
+    """The same artefact at the trailing edge, in reverse: months after the
+    ledger ends read as a collapse in spending."""
+    result = report(fixed_cost_ledger, "2026-01-01", "2027-12-31")
+    rent = trend(result, "Rent")
+
+    assert rent.direction == "flat"
+    assert rent.slope == Decimal("0.00")
+    assert rent.periods_observed == 6
+
+
+def test_too_short_a_ledger_still_abstains_however_wide_the_request(
+    short_fixed_cost_ledger,
+):
+    """Two months of data cannot become a trend by asking for four years of
+    them. Abstention was the correct answer and remains it."""
+    result = report(short_fixed_cost_ledger, "2020-01-01", "2030-01-01")
+    rent = trend(result, "Rent")
+
+    assert rent.direction == "insufficient_data"
+    assert rent.periods_observed == 2
+    assert f"at least {MIN_PERIODS}" in rent.reason
+
+
+def test_an_over_wide_window_changes_nothing_at_all(fixed_cost_ledger):
+    """Not merely "does not change the verdict" -- every figure is identical,
+    so there is no residue of the requested range anywhere in the report."""
+    natural = report(fixed_cost_ledger)
+    over_wide = report(fixed_cost_ledger, "2020-01-01", "2030-01-01")
+
+    assert over_wide.from_date == natural.from_date
+    assert over_wide.to_date == natural.to_date
+    assert over_wide.periods == natural.periods
+    assert [e.to_dict() for e in over_wide.envelopes] == [
+        e.to_dict() for e in natural.envelopes
+    ]
+
+
+def test_the_narrowing_is_reported_rather_than_done_quietly(fixed_cost_ledger):
+    """Silently answering a different question than the one asked is its own
+    failure, even when the substituted question is the better one."""
+    result = report(fixed_cost_ledger, "2025-01-01", "2027-12-31")
+
+    assert any("window narrowed" in w for w in result.warnings), result.warnings
+    assert any("not months of zero spending" in w for w in result.warnings)
+
+
+def test_a_window_inside_the_ledger_is_not_narrowed(fixed_cost_ledger):
+    """The clamp must not fire on an ordinary request, or the warning becomes
+    noise readers learn to skip."""
+    result = report(fixed_cost_ledger, "2026-02-01", "2026-05-31")
+
+    assert not any("window narrowed" in w for w in result.warnings)
+    assert result.periods == ("2026-02", "2026-03", "2026-04", "2026-05")
+
+
+def test_a_window_wholly_outside_the_ledger_is_empty_not_an_error(fixed_cost_ledger):
+    """A well-formed question with an empty answer, like a search matching
+    nothing -- distinct from a backwards window, which describes no window at
+    all and stays `ok: false`."""
+    result = report(fixed_cost_ledger, "2020-01-01", "2020-12-31")
+
+    assert result.ok is True
+    assert result.envelopes == ()
+    assert result.outliers == ()
+    assert any("lies outside the ledger" in w for w in result.warnings)
+
+
+def test_zero_months_inside_the_ledger_are_still_real_evidence(ledger):
+    """Clamping is at ledger scope, never per envelope. Gifts is spent in
+    January, March and May and nothing in between, and those empty months are
+    genuine data -- an envelope that starts or stops mid-ledger is a finding
+    that per-envelope clamping would erase."""
+    result = report(ledger, "2026-01-01", "2026-06-30")
+    gifts = trend(result, "Gifts")
+
+    assert gifts.periods_observed == 6
+    assert [p.amount for p in gifts.points] == [
+        Decimal("40.00"),
+        Decimal(0),
+        Decimal("40.00"),
+        Decimal(0),
+        Decimal("40.00"),
+        Decimal(0),
+    ]
+
+
+def test_outlier_detection_is_unaffected_by_the_requested_window(ledger):
+    """Observations are drawn from transactions, not from periods, so a range
+    holding no transactions cannot shift a median or a score. Asserted rather
+    than reasoned about, since a depressed median would silently change which
+    transactions are called unusual."""
+    natural = report(ledger)
+    over_wide = report(ledger, "2020-01-01", "2030-01-01")
+
+    assert [o.to_dict() for o in over_wide.outliers] == [
+        o.to_dict() for o in natural.outliers
+    ]
+    assert [a.to_dict() for a in over_wide.assessments] == [
+        a.to_dict() for a in natural.assessments
+    ]

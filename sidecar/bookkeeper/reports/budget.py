@@ -216,13 +216,17 @@ class BudgetReport:
         return "\n".join(lines)
 
 
-def _ledger_bounds(entries: list[Any]) -> tuple[date, date] | None:
+def ledger_bounds(entries: list[Any]) -> tuple[date, date] | None:
     """The first and last transaction dates in the ledger.
 
     The default window, for the reason `reports/spending.py` gives: a report
     of a fixed ledger must not change meaning because a day passed, and a
     demo ledger whose data sits outside a wall-clock window would render as
     an empty budget.
+
+    Public because `reports/trends.py` clamps its window to these bounds and
+    must use the same definition of "when this ledger begins" -- two answers
+    to that question is the drift this package keeps being bitten by.
     """
     dates = [e.date for e in entries if isinstance(e, Transaction)]
     return (min(dates), max(dates)) if dates else None
@@ -349,7 +353,7 @@ def budget_report(
     if entries is None:
         entries, _errors, options = load_ledger()
 
-    bounds = _ledger_bounds(entries)
+    bounds = ledger_bounds(entries)
     today = coerce_asof(None)
     start = coerce_asof(from_date) if from_date is not None else (bounds[0] if bounds else today)
     end = coerce_asof(to_date) if to_date is not None else (bounds[1] if bounds else today)

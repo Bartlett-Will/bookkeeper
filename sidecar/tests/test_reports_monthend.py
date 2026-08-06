@@ -735,8 +735,12 @@ def test_direction_is_read_over_a_trailing_window_not_the_month_alone(ledger):
     The window ends with the reported month and runs `TRAILING_MONTHS` back."""
     result = report(ledger, "2026-03")
 
-    assert result.trend_to == date(2026, 3, 31)
     assert result.trend_from == date(2025, 10, 1)
+    # The window *measured*, not the one requested: `trends` narrows to the
+    # ledger's own span, and the fixture's last transaction is 2026-03-21. The
+    # rendered baseline line has to name the range the verdicts were actually
+    # read from, or it invites the reader to check dates that were never used.
+    assert result.trend_to == date(2026, 3, 21)
     assert (result.trend_to.year * 12 + result.trend_to.month) - (
         result.trend_from.year * 12 + result.trend_from.month
     ) == TRAILING_MONTHS - 1

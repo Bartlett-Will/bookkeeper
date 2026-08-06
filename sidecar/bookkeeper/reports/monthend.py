@@ -845,18 +845,23 @@ def month_end_report(
     # the thing being judged. Both come from one trailing-window run, and the
     # outliers are then filtered to the reported month.
     #
-    # The window is clamped to the ledger's first transaction, and that clamp
-    # is not cosmetic: months before the ledger begins contain no spending,
-    # and `trends` cannot distinguish "nothing was spent" from "nothing was
-    # recorded". Left unclamped, a ledger that starts in January makes every
-    # envelope "rising" in January — including a rent that has never changed —
-    # because five empty months precede it. An abstention on a short history
-    # is the correct answer; a confident wrong direction is the failure mode
-    # §5.3's amendment is about.
+    # The requested window is asked for in full and `trends` narrows it to the
+    # ledger's own span itself, so the clamp lives in one place rather than
+    # two. That clamp is not cosmetic: months before the ledger begins hold no
+    # spending, and nothing downstream can distinguish "nothing was spent"
+    # from "nothing was recorded". Unclamped, a ledger starting in January
+    # makes every envelope read as trending up in January — including a rent
+    # that has never changed — because five empty months precede it. An
+    # abstention on a short history is right; a confident wrong direction is
+    # the §5.3 failure mode.
+    #
+    # `trend_from`/`trend_to` below are therefore the window `trends`
+    # *measured*, not the one asked for, which is what the rendered baseline
+    # line should say. `test_the_trend_window_never_runs_off_the_front_of_the
+    # _ledger` pins the outcome here, so relying on `trends` to do it cannot
+    # regress silently.
     trend_year, trend_month = _months_before(year, number, TRAILING_MONTHS - 1)
     trend_start = month_bounds(trend_year, trend_month)[0]
-    if bounds is not None:
-        trend_start = max(trend_start, bounds[0])
     trends = trends_report(
         min(trend_start, asof), asof, entries=entries, errors=errors, options=options
     )

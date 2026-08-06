@@ -9,6 +9,32 @@ per-period totals that `/reports/spending` already publishes, so a chart and
 its trend line can never disagree, and the envelope rollup stays the
 ledger's (§5.2) rather than this module's.
 
+**The window is clamped to the ledger's own first and last transaction.**
+A month before any data exists is not a month of zero spending; it is not a
+month at all. `spending_report` deliberately emits a zero point for every
+period in the requested range -- correct for a chart, whose x-axis should be
+the range that was asked for -- but a *statistic* over those zeros is not
+merely padded, it is wrong: a rent fixed at 1000.00 reported `up` given an
+early `from`, and `down` given a `to` past the end of the ledger, because
+five empty months followed by six real ones is a rising line. That is the
+exact failure this module is built to prevent, inverted: rather than
+declining to judge, it manufactured a *confident* direction out of an
+artefact of the window, and "your rent is going up" about a fixed cost is a
+claim a user acts on.
+
+Clamping is at **ledger** scope, never per envelope, and the difference
+matters. Within the ledger's span a zero month is real evidence -- you did
+spend nothing on coffee in January -- and an envelope that starts or stops
+mid-ledger is a genuine finding that per-envelope clamping would erase.
+Outside the ledger's span there is no evidence either way. Only the second
+is dropped, and the narrowing is reported as a warning rather than done
+quietly.
+
+Outlier detection is unaffected by this and always was: observations are
+drawn from transactions, not from periods, so a range holding no
+transactions contributes nothing to a median and cannot shift a score. The
+tests assert that invariance directly rather than leaving it to reasoning.
+
 **Direction: the least-squares slope of period totals, in `Decimal`.** With
 `n` periods and totals `y_i`, using integer weights `w_i = 2i - (n-1)`:
 
@@ -80,6 +106,7 @@ ever handed to the browser as a float to finish.
 
 from __future__ import annotations
 
+import calendar
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
@@ -88,12 +115,13 @@ from typing import Any
 
 from beancount.core.data import Transaction
 
-from bookkeeper.envelope.compute import load_ledger
+from bookkeeper.envelope.compute import coerce_asof, load_ledger
 from bookkeeper.envelope.directives import (
     DirectiveError,
     build_account_map,
     parse_envelope_directives,
 )
+from bookkeeper.reports.budget import ledger_bounds
 from bookkeeper.reports.spending import EXPENSE_ACCOUNT_PREFIX, SpendPoint, spending_report
 
 #: Fewer periods than this and no direction is reported. Three is the
@@ -587,8 +615,60 @@ def trends_report(
     if entries is None:
         entries, errors, options = load_ledger()
 
+    # Coerced here rather than left to `spending_report` so the window can be
+    # clamped before the series is built. `coerce_asof` raises on unparseable
+    # input, which is the documented behaviour and is preserved.
+    requested_start = coerce_asof(from_date) if from_date is not None else None
+    requested_end = coerce_asof(to_date) if to_date is not None else None
+    bounds = ledger_bounds(entries)
+
+    clamp_warning: str | None = None
+    if bounds is not None:
+        first, last = bounds
+        start = requested_start if requested_start is not None else first
+        end = requested_end if requested_end is not None else last
+        if end >= start:
+            # Clamped to whole *months*, not to the transaction dates, because
+            # the month is the unit being measured. See the module docstring:
+            # a window ending mid-month covers that whole month, so trimming
+            # it back to the last transaction would relabel the window without
+            # changing a single figure in it.
+            ledger_from = first.replace(day=1)
+            ledger_to = last.replace(day=calendar.monthrange(last.year, last.month)[1])
+            clamped_start, clamped_end = max(start, ledger_from), min(end, ledger_to)
+            if clamped_end < clamped_start:
+                # The requested window lies wholly outside the ledger. A
+                # well-formed question with an empty answer, not an error --
+                # the same reading `search` gives a query that matches
+                # nothing.
+                return TrendsReport(
+                    ok=True,
+                    from_date=start,
+                    to_date=end,
+                    currency=str(
+                        (options or {}).get("operating_currency", ["USD"])[0]
+                    ),
+                    warnings=[
+                        (
+                            f"the requested window {start.isoformat()} to "
+                            f"{end.isoformat()} lies outside the ledger, which runs "
+                            f"{first.isoformat()} to {last.isoformat()}; there is "
+                            "nothing in it to find a trend in"
+                        )
+                    ],
+                )
+            if (clamped_start, clamped_end) != (start, end):
+                clamp_warning = (
+                    f"window narrowed from {start.isoformat()}..{end.isoformat()} to the "
+                    f"ledger's own range {clamped_start.isoformat()}.."
+                    f"{clamped_end.isoformat()}: months outside it hold no data and are "
+                    "not months of zero spending, and counting them as such invents a "
+                    "direction out of the window"
+                )
+            requested_start, requested_end = clamped_start, clamped_end
+
     spending = spending_report(
-        from_date, to_date, "month", entries=entries, errors=errors, options=options
+        requested_start, requested_end, "month", entries=entries, errors=errors, options=options
     )
     if not spending.ok:
         return TrendsReport(
@@ -661,5 +741,7 @@ def trends_report(
         unmapped_total=spending.unmapped_total,
         unmapped_accounts=spending.unmapped_accounts,
         unmapped_transactions=unmapped_transactions,
-        warnings=list(spending.warnings),
+        # The clamp goes first: it changes which window every figure below
+        # describes, so it outranks the per-currency and coverage notes.
+        warnings=([clamp_warning] if clamp_warning else []) + list(spending.warnings),
     )
