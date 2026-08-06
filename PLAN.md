@@ -387,6 +387,30 @@ Four rules make this work at 8B:
    as `ReviewCard`, `EnvelopeCard`, `ReportChart`. The model never recites
    numbers into text, so it cannot transpose a digit. It picks a tool; the data
    path is deterministic.
+
+   > **Amendment (measured, 2026-07-31). Withholding the numbers is necessary
+   > but not sufficient — on its own it makes things worse.** With figures kept
+   > out of the model's view and the prompt *forbidding* their use, `qwen3:8b`
+   > invented them: four consecutive turns produced four different dollar
+   > amounts against a real Groceries balance of `0.00`, e.g. "You have $25.00
+   > left". The mechanism was working exactly as designed. That is the problem.
+   >
+   > Withholding alone converts a **transposition** into an **invention**, which
+   > is strictly worse: a transposed digit is at least anchored to something
+   > real. The wording is the load-bearing part — "do not repeat its numbers"
+   > implies the model *has* them and is being asked to keep quiet, and a
+   > prohibition implies possession. Stating the situation instead ("you were
+   > not shown the figures") measured 6/6 clean and is pinned by a regression
+   > test in `lib/ai/tools/bookkeeper/result.ts`.
+   >
+   > A softer residue remains and is **not** solved: the model still sometimes
+   > asserts "you're currently within your groceries budget" — an unsupported
+   > *claim* rather than a fabricated number. Each such sentence is short,
+   > unfalsifiable from the model's position, and something a user would act
+   > on. The honest options are a small set of pre-computed qualitative facts
+   > the model may repeat, or dropping the prose reply and letting the card
+   > speak. Adding more prohibitions is **not** one of them — that is the
+   > approach that produced the fabrication in the first place.
 2. **Actions bypass the LLM entirely.** This is the most important rule. When the
    user clicks *Accept* on a review card, that hits the sidecar API directly —
    it does **not** go back through the model as another turn. Approving 40
@@ -402,6 +426,29 @@ Four rules make this work at 8B:
 4. **Deterministic pre-routing.** Obvious commands (`sync`, `review`) are matched
    before the model sees them and invoke the tool directly. Cheap, instant, and
    it sidesteps the "does this need a tool?" decision the model is worst at.
+
+   > **Amendment (as built, 2026-07-31).** Only half of this shipped, and the
+   > half that did is the half that mattered. A matched command forces the tool
+   > via the AI SDK's `toolChoice` rather than bypassing the model outright, so
+   > the "does this need a tool, and which one?" decision — the §3.3 failure —
+   > is genuinely removed. But the turn still costs one inference, so it is not
+   > "instant": measured at 2 calls for `show me the review queue` and 3 for
+   > `sync my accounts` (the extra being title generation on a chat's first
+   > message). Full bypass needs the route to synthesise the tool call and its
+   > UI stream parts by hand.
+   >
+   > This is recorded rather than quietly left as drift, because the exit
+   > criterion it might have threatened — approving 40 transactions makes zero
+   > LLM calls — is unaffected: that path is rule 2's click bypass, which was
+   > measured at **0**. Revisit if typed-command latency becomes a complaint.
+   >
+   > The matcher is deliberately conservative, and that trade is worth naming:
+   > it declines on any `?`, on messages over six words, and on a vocabulary of
+   > interrogatives (`why how what did fail error…`), *before* pattern
+   > matching. So `what needs reviewing` is **not** pre-routed despite being a
+   > natural command — it falls through to the model, which picks correctly. A
+   > false positive hijacks a genuine question, and that costs more than a
+   > missed shortcut. The write tool is not reachable by pre-routing at all.
 
 **Wiring the AI SDK to Ollama.** Ollama exposes an OpenAI-compatible endpoint at
 `http://localhost:11434/v1`, so the template's provider config in
@@ -561,6 +608,36 @@ handling.
 **Exit:** a full natural-language sync → review → correct loop with no
 hand-editing of ledger files; corrections demonstrably change the next run's
 predictions; approving 40 transactions makes zero additional LLM calls.
+
+> **Complete, 2026-07-31. All three exit criteria met and measured** — see
+> `docs/phase4-verification.md` for the evidence and its limits.
+>
+> - **Approving 40 transactions: 0 LLM calls.** Not zero completions — zero
+>   requests of any kind reached Ollama, measured by a counting proxy on the
+>   wire rather than reasoned from the code. Three runs on three independently
+>   generated trees, each with a positive control (a real chat turn moving the
+>   counter first) so the zero is a measurement and not a disconnected wire.
+> - **Full loop, no hand-editing**: sync → review → 332 confirmations through
+>   the click path, ending `bean-check` clean, `verify` OK, one app-made commit.
+> - **Corrections change predictions**: confirming `SQ *PEGASUS BOOKS 4471`
+>   moved the differently-mangled `PURCHASE AUTHORIZED ON 07/22 PEGASUS BOOKS
+>   #8823` from *abstain* to `Expenses:Books` via the memory tier. Boundary
+>   reported honestly: a third form carrying a city token normalizes to a
+>   different key and still misses.
+>
+> **Tool selection does not degrade at six tools** (22/22 standard, 10/10 on an
+> adversarial boundary set), so §7's "shrink the tool surface" fallback is not
+> indicated. That reduces the risk rather than eliminating it: 32 single-turn
+> prompts on one machine is a demonstration, not a benchmark, and §3.3's
+> *multi-turn* degradation remains untested — the likelier place this breaks.
+>
+> One result worth carrying into Phase 5: *"I want groceries to be 400 a
+> month"* invoked `allocate_to_envelope`. Both that and a prose reply are
+> defensible, but of the two the model took the one that **writes**, on a
+> phrasing that is a wish rather than an instruction. Nothing was harmed — it
+> guessed neither amount nor envelope, and allocation is additive and
+> revertible — but "100% on the hard set" should not be read as "the write tool
+> is conservative".
 
 ### Phase 5 — Reports and model bake-off
 Spend-by-envelope over time, budget vs. actual, trend and outlier detection, all
