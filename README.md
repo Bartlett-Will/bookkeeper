@@ -394,6 +394,22 @@ cd web && pnpm exec tsc --noEmit && pnpm run build
 The one skipped test hits the live SimpleFIN demo server; enable with
 `RUN_SIMPLEFIN_INTEGRATION=1`.
 
+### CI
+
+`.github/workflows/ci.yml` runs the same commands on every push, as two jobs so
+a Python failure and a TypeScript failure are distinguishable at a glance:
+**sidecar** (ruff, pytest) and **web** (ultracite, `tsc --noEmit`, unit tests,
+`next build`).
+
+It is offline by design. No Ollama and no SimpleFIN: the accuracy eval defaults
+to `use_llm=False`, tier-4 tests are mocked at the HTTP layer, and the live
+SimpleFIN test stays skipped because nothing sets `RUN_SIMPLEFIN_INTEGRATION`.
+A dedicated step fails the build if a test wrote to the checked-out `ledger/`.
+
+The **§5.5 accuracy regression gate** — non-LLM cascade accuracy must stay above
+a committed 0.85 floor — runs as its own named step so a regression is not
+buried in the rest of the suite. See `docs/phase3-accuracy.md`.
+
 The sidecar's HTTP surface is what Phase 4 will consume. It is browsable at
 <http://localhost:8000/docs> once `bookkeeper serve` is running:
 

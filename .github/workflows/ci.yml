@@ -1,0 +1,169 @@
+name: CI
+
+# Runs every gate this repo already has. Until this file existed, the §5.5
+# accuracy regression gate in sidecar/tests/test_categorize_eval.py was
+# enforced only by whoever remembered to run `uv run pytest` -- see
+# docs/phase3-accuracy.md, "CI regression gate".
+#
+# Two jobs, deliberately: a Python failure and a TypeScript failure should be
+# distinguishable at a glance rather than buried in one combined log.
+#
+# Hermetic by construction. Nothing here starts Ollama, and nothing here is
+# allowed to reach SimpleFIN or write to the checked-out `ledger/`.
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sidecar:
+    name: sidecar (python)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sidecar
+    steps:
+      - uses: actions/checkout@v7
+
+      # pyproject.toml requires >=3.12; the measured numbers in
+      # docs/phase3-accuracy.md come from 3.12.
+      - uses: astral-sh/setup-uv@v9
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: sidecar/uv.lock
+
+      # --locked fails rather than silently re-resolving, so CI tests the
+      # dependency set that is actually committed.
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      # The §5.5 gate runs here, by explicit node id and BEFORE the full
+      # suite, so an accuracy regression is its own named red step instead of
+      # one failure among 559 dots. Node ids rather than `-k`: if a test is
+      # renamed pytest exits non-zero on the missing id, where `-k` would
+      # quietly select nothing and turn the gate back into decoration.
+      #
+      # `use_llm=False` is the eval default, so this tier stack is memory +
+      # rule + MCC + statistical only and never reaches for a model.
+      - name: Accuracy regression gate (PLAN.md 5.5)
+        id: accuracy_gate
+        run: |
+          uv run pytest -v \
+            tests/test_categorize_eval.py::test_regression_gate_accuracy_does_not_drop_below_the_committed_floor \
+            tests/test_categorize_eval.py::test_regression_gate_non_llm_cascade_beats_the_majority_baseline \
+            tests/test_categorize_eval.py::test_corpus_is_not_degenerate
+
+      - name: Explain an accuracy-gate failure
+        if: failure() && steps.accuracy_gate.outcome == 'failure'
+        run: |
+          {
+            echo "## Accuracy regression gate failed (PLAN.md 5.5)"
+            echo
+            echo "This is **not** an ordinary unit-test failure. One of:"
+            echo
+            echo "- non-LLM cascade accuracy dropped below the committed 0.85 floor, or"
+            echo "- the cascade stopped beating the majority-class baseline, or"
+            echo "- \`tests/fixtures/merchant_corpus.json\` was simplified below the"
+            echo "  anti-degeneracy bounds (>=250 entries, >=200 distinct descriptions,"
+            echo "  majority class <40%)."
+            echo
+            echo "The floor is a floor, not a target. Lowering it needs a recorded"
+            echo "reason in \`docs/phase3-accuracy.md\`, not a smaller number here."
+            echo
+            echo "Reproduce locally: \`cd sidecar && uv run bookkeeper eval\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # -rs prints the skip reasons, so it is visible in the log that
+      # test_simplefin_integration.py stayed skipped. It is gated on
+      # RUN_SIMPLEFIN_INTEGRATION=1, which nothing here sets -- that test is
+      # the suite's only real network call.
+      - name: Tests (pytest)
+        run: uv run pytest -q -rs
+
+      # Tests point BOOKKEEPER_ROOT at temp trees, but the default root is the
+      # repo root, so a test that forgot the fixture would write to the
+      # checked-out ledger. Locally that looks like a passing run with a dirty
+      # worktree; here it is a failure.
+      #
+      # `data/` is covered for its tracked contents (data/memory.json is the
+      # documented contamination vector -- see docs/phase3-accuracy.md
+      # Finding 2). data/raw and data/eval are gitignored and not covered.
+      - name: Assert nothing wrote to the real ledger
+        working-directory: .
+        run: |
+          dirty="$(git status --porcelain -uall -- ledger/ data/)"
+          if [ -n "$dirty" ]; then
+            echo "::error::the test run modified the checked-out ledger/ or data/ tree"
+            echo "$dirty"
+            exit 1
+          fi
+          echo "ledger/ and data/ unchanged"
+
+  web:
+    name: web (typescript)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    env:
+      # NextAuth throws at startup without this even though the app has no
+      # login flow (web/.env.example). CI value is a placeholder; the app is
+      # localhost-only and this secret protects nothing here.
+      AUTH_SECRET: ci-placeholder-not-a-real-secret
+      SQLITE_URL: ./data/ci.db
+      OLLAMA_MODEL: qwen3:8b
+      # Deliberately unreachable. There is no Ollama and no sidecar in CI, and
+      # pointing these at a dead port means a build step that started
+      # contacting either one fails loudly instead of passing by accident on
+      # a machine where they happen to be running.
+      OLLAMA_BASE_URL: http://127.0.0.1:1/api
+      SIDECAR_BASE_URL: http://127.0.0.1:1
+    steps:
+      - uses: actions/checkout@v7
+
+      # Reads the pnpm version from web/package.json's packageManager field
+      # (10.32.1). `pnpm` is not otherwise on PATH -- locally it comes from
+      # corepack, see the Makefile.
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26.x"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check (ultracite/biome)
+        run: pnpm run check
+
+      # pnpm exec, not npx: typescript is a devDependency, so this runs the
+      # pinned local compiler instead of resolving one from the registry.
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Unit tests
+        run: pnpm run test:unit
+
+      # `build` runs `tsx lib/db/migrate` first, which creates the SQLite file
+      # at SQLITE_URL. Gitignored (*.db), so it does not dirty the checkout.
+      - name: Build
+        run: pnpm run build

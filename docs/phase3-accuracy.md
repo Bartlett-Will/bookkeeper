@@ -287,10 +287,51 @@ Implemented as tests in `sidecar/tests/test_categorize_eval.py`:
   distinct descriptions, majority class <40%). Without this the exit criterion
   could go quietly vacuous through an innocent-looking fixture edit.
 
-**There is no CI configuration in this repository** — no `.github/workflows/`,
-no CI config of any kind. The gate is therefore only enforced by whoever runs
-`uv run pytest`. Wiring up CI is outstanding work and is not in Phase 3's
-scope; until it exists, the §5.5 regression gate is real but unenforced.
+**Enforced as of Phase 5** by `.github/workflows/ci.yml`. Until then there was
+no CI configuration of any kind in this repository and the gate was real but
+unenforced — run only by whoever remembered to run `uv run pytest`.
+
+The workflow runs the three gate tests **by explicit node id, as their own
+named step, before the rest of the suite**, so a §5.5 regression shows up as a
+red step called "Accuracy regression gate (PLAN.md 5.5)" rather than as one
+failure among ~590 dots. Node ids rather than `-k`, because a `-k` expression
+that no longer matches anything selects zero tests and exits green; a stale
+node id exits non-zero. On failure the workflow writes the three possible
+causes to the job summary, including the rule that the 0.85 floor is lowered
+by recording a reason in this document rather than by editing the constant.
+
+The gate stays hermetic in CI. `use_llm=False` is the eval default, so the
+measured tier stack is memory + rule + MCC + statistical and no step reaches
+for a model; there is no Ollama on the runner and nothing installs one. The
+whole sidecar suite was re-run locally with outbound TCP blocked — including
+loopback:11434, on a machine where Ollama *was* running, so a real call would
+have failed rather than quietly succeeding — and the only failure was an
+unrelated in-flight one. Tier-4 tests are served by `pytest-httpx`.
+
+Two things the workflow enforces that the tests alone do not:
+
+- **`RUN_SIMPLEFIN_INTEGRATION` is never set**, so the one live-network test
+  stays skipped rather than becoming a flaky dependency on a third party's
+  infrastructure. `pytest -q -rs` prints the skip reason, so "still skipped"
+  is visible in the log rather than assumed.
+- **The checked-out `ledger/` must be unchanged after the run.** `paths.root()`
+  falls back to the repo root when `BOOKKEEPER_ROOT` is unset, so a test that
+  forgot the fixture would write to the real ledger. Locally that looks like a
+  passing run with a dirty worktree; in CI it is a failed step. This covers
+  `ledger/` fully and `data/` only for its tracked contents (`data/memory.json`
+  — see Finding 2). `data/raw/` and `data/eval/` are gitignored and a write
+  there would not be caught.
+
+Setting `BOOKKEEPER_ROOT` job-wide as a blunter guard was tried and rejected:
+`test_starter_rules_yaml_is_valid_against_real_chart_of_accounts` validates the
+starter rules against the **real** `ledger/accounts.beancount` on purpose, and
+fails when the root is redirected. Reading the committed ledger is intended;
+writing to it is what the guard catches.
+
+What remains unenforced: the workflow has never executed on GitHub. Every
+command in it was run locally and reported, but the runner environment —
+action resolution, cache behaviour, Node 26 and Python 3.12 provisioning — is
+confirmed only by the first real run.
 
 ## What these numbers are worth
 
