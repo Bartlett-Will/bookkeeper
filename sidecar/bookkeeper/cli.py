@@ -18,6 +18,11 @@ future chat tools is a design requirement (PLAN.md §9), not an afterthought.
                      -> TransactionSearch
     report   -> bookkeeper.reports.spending:spending_report(from_date=None, to_date=None,
                      period="month") -> SpendingReport
+    month-end-> bookkeeper.reports.monthend:month_end_report(month=None) -> MonthEndReport
+    budget   -> bookkeeper.reports.budget:budget_report(from_date=None, to_date=None)
+                     -> BudgetReport
+    trends   -> bookkeeper.reports.trends:trends_report(from_date=None, to_date=None)
+                     -> TrendsReport
     allocate -> bookkeeper.envelope.allocate:allocate_to_envelope(envelope, amount,
                      currency="USD", allocated_on=None) -> AllocateResult
     serve    -> bookkeeper.api:serve(host, port)
@@ -113,6 +118,48 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+def _cmd_month_end(args: argparse.Namespace) -> int:
+    from bookkeeper.reports.monthend import month_end_report
+
+    # Same shape as `report`: an unparseable month raises rather than
+    # returning a failed result, because a caller who named a month that
+    # cannot be parsed has no month to be given a report about.
+    try:
+        report = month_end_report(args.month)
+    except ValueError as exc:
+        print(f"month-end report failed: {exc}")
+        return 1
+    print(report.render())
+    return 0 if report.ok else 1
+
+
+def _cmd_budget(args: argparse.Namespace) -> int:
+    from bookkeeper.reports.budget import budget_report
+
+    # Same shape as `report`: an unparseable date raises rather than
+    # returning a failed result, so it is caught here and answered with a
+    # message instead of a traceback.
+    try:
+        report = budget_report(args.from_date, args.to)
+    except ValueError as exc:
+        print(f"budget report failed: {exc}")
+        return 1
+    print(report.render())
+    return 0 if report.ok else 1
+
+
+def _cmd_trends(args: argparse.Namespace) -> int:
+    from bookkeeper.reports.trends import trends_report
+
+    try:
+        report = trends_report(args.from_date, args.to)
+    except ValueError as exc:
+        print(f"trends report failed: {exc}")
+        return 1
+    print(report.render())
+    return 0 if report.ok else 1
+
+
 def _cmd_allocate(args: argparse.Namespace) -> int:
     from bookkeeper.envelope.allocate import allocate_to_envelope
 
@@ -200,6 +247,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Granularity: month (default) or year",
     )
     rp.set_defaults(func=_cmd_report)
+
+    me = sub.add_parser(
+        "month-end", help="Composite month-end report: envelopes, budget vs actual, unmapped"
+    )
+    me.add_argument(
+        "--month",
+        default=None,
+        help="YYYY-MM; defaults to the month of the ledger's last transaction",
+    )
+    me.set_defaults(func=_cmd_month_end)
+
+    bg = sub.add_parser("budget", help="Show allocated vs actually spent per envelope")
+    bg.add_argument("--from", dest="from_date", default=None, help="ISO date; inclusive")
+    bg.add_argument("--to", default=None, help="ISO date; inclusive")
+    bg.set_defaults(func=_cmd_budget)
+
+    # No `--period`: trends are monthly and only monthly. An envelope budget
+    # is a monthly instrument (§5.2), and a granularity flag would let a
+    # caller pick the one that produced the answer they wanted.
+    tr = sub.add_parser("trends", help="Show spending direction and unusual transactions")
+    tr.add_argument("--from", dest="from_date", default=None, help="ISO date; inclusive")
+    tr.add_argument("--to", default=None, help="ISO date; inclusive")
+    tr.set_defaults(func=_cmd_trends)
 
     # Amounts stay strings all the way into `allocate_to_envelope`, which
     # does its own `Decimal` conversion. `type=float` here would round the

@@ -920,6 +920,46 @@ def test_search_honours_limit_and_says_when_it_truncated(fixture_root):
     assert body["truncated"] is True
 
 
+def test_search_totals_the_matches_and_keeps_the_money_as_strings(fixture_root):
+    """The Phase 4 gap: "how much did I spend at X" had no correct tool. The
+    total rides in this response rather than becoming a seventh tool (§5.3)."""
+    fixture_root("basic")
+    body = TestClient(app).get("/transactions/search", params={"q": "groceries"}).json()
+
+    usd = next(t for t in body["amount_totals"] if t["currency"] == "USD")
+    assert usd["spent"] == "365.00"
+    assert isinstance(usd["net"], str)
+    assert isinstance(usd["received"], str)
+    assert usd["accounts"] == ["Assets:Checking"]
+    assert body["mixed_currency"] is False
+
+
+def test_search_totals_keep_refunds_out_of_the_spent_figure(fixture_root):
+    """The fixture's Dining Out has a 60.00 refund against a 60.00 charge.
+    Netting silently would answer "how much did I spend on dining" with a
+    number smaller than what was spent."""
+    fixture_root("basic")
+    body = TestClient(app).get("/transactions/search", params={"q": "dining"}).json()
+
+    usd = next(t for t in body["amount_totals"] if t["currency"] == "USD")
+    assert usd["spent"] == "185.00"
+    assert usd["received"] == "60.00"
+    assert usd["net"] == "125.00"
+
+
+def test_search_totals_cover_every_match_not_just_the_page(fixture_root):
+    """A total over the visible rows would understate the answer exactly when
+    the result was large enough for someone to need one."""
+    fixture_root("basic")
+    client = TestClient(app)
+    full = client.get("/transactions/search", params={"q": "groceries"}).json()
+    page = client.get("/transactions/search", params={"q": "groceries", "limit": 2}).json()
+
+    assert page["truncated"] is True
+    assert len(page["matches"]) == 2
+    assert page["amount_totals"] == full["amount_totals"]
+
+
 def test_search_reports_an_empty_query_as_a_reason_not_an_error(fixture_root):
     fixture_root("basic")
     resp = TestClient(app).get("/transactions/search", params={"q": "   "})
@@ -980,6 +1020,330 @@ def test_spending_report_by_year(fixture_root):
     assert body["periods"] == ["2026"]
 
 
+# --- budget vs actual ------------------------------------------------------
+
+
+def test_budget_report_pairs_allocations_with_actual_spending(fixture_root):
+    fixture_root("basic")
+    resp = TestClient(app).get(
+        "/reports/budget", params={"from": "2026-01-01", "to": "2026-02-28"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["ok"] is True
+    assert body["currency"] == "USD"
+    groceries = next(e for e in body["envelopes"] if e["name"] == "Groceries")
+    assert groceries["allocated"] == "1200.00"
+    assert groceries["spent"] == "365.00"
+    assert groceries["remaining"] == "835.00"
+    assert groceries["status"] == "within"
+
+
+def test_budget_report_keeps_money_as_strings_and_the_ratio_as_a_number(fixture_root):
+    """The deliberate type asymmetry. Pydantic renders `Decimal` as a JSON
+    string and nothing downstream may coerce it; `consumed_ratio` is not
+    money and is a real JSON number, so the UI can compare it without
+    parsing."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/budget").json()
+    groceries = next(e for e in body["envelopes"] if e["name"] == "Groceries")
+
+    assert isinstance(groceries["allocated"], str)
+    assert isinstance(groceries["overspend"], str)
+    assert isinstance(body["total_overspend"], str)
+    assert isinstance(groceries["consumed_ratio"], float)
+    assert isinstance(groceries["overspent"], bool)
+
+
+def test_budget_report_serves_overspent_as_a_flag_not_a_string_to_parse(fixture_root):
+    """A browser cannot do `Decimal` arithmetic and must not try, so the
+    comparison is made server-side and shipped as a boolean."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/budget").json()
+
+    for line in body["envelopes"]:
+        assert line["overspent"] == (Decimal(line["overspend"]) > 0), line["name"]
+
+
+def test_budget_report_carries_an_undefined_percentage_as_null(fixture_root):
+    """A window with no allocations in it: every percentage is undefined, and
+    `null` is the only value a client cannot misread as 0% or 100%."""
+    fixture_root("basic")
+    body = TestClient(app).get(
+        "/reports/budget", params={"from": "2026-02-02", "to": "2026-02-28"}
+    ).json()
+
+    for line in body["envelopes"]:
+        assert line["allocated"] == "0.00" or line["allocated"] == "0"
+        assert line["consumed_ratio"] is None, line["name"]
+
+
+def test_budget_report_defaults_to_the_ledgers_own_date_range(fixture_root):
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/budget").json()
+    assert body["from_date"] == "2026-01-01"
+    assert body["to_date"] == "2026-02-14"
+
+
+def test_budget_report_balances_agree_with_the_envelopes_endpoint(fixture_root):
+    """One definition of "what counts as Groceries", not two. A budget chart
+    that disagreed with `/envelopes` would be the §5.2 drift in a new shape."""
+    fixture_root("basic")
+    client = TestClient(app)
+    budget = client.get("/reports/budget", params={"to": "2026-02-14"}).json()
+    envelopes = client.get("/envelopes", params={"asof": "2026-02-14"}).json()
+
+    assert {e["name"]: e["balance"] for e in budget["envelopes"]} == {
+        e["name"]: e["balance"] for e in envelopes["envelopes"]
+    }
+
+
+def test_budget_report_rejects_an_unparseable_date(fixture_root):
+    fixture_root("basic")
+    resp = TestClient(app).get("/reports/budget", params={"from": "last tuesday"})
+    assert resp.status_code == 422
+
+
+def test_budget_report_reports_a_backwards_window_as_200_with_a_reason(fixture_root):
+    """The request was answered; the answer is that it describes no window."""
+    fixture_root("basic")
+    resp = TestClient(app).get(
+        "/reports/budget", params={"from": "2026-03-01", "to": "2026-01-01"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is False
+    assert "is after" in resp.json()["errors"][0]
+
+
+# --- trends and outliers ---------------------------------------------------
+
+
+def test_trends_report_abstains_rather_than_calling_two_periods_a_trend(fixture_root):
+    """The fixture spans two months. `insufficient_data` with a reason, and never
+    `flat` -- the distinction is the whole point of the field."""
+    fixture_root("basic")
+    resp = TestClient(app).get("/reports/trends")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["ok"] is True
+    for line in body["envelopes"]:
+        assert line["direction"] == "insufficient_data", line["name"]
+        assert "at least 3" in line["reason"]
+        # The abstention is interrogable from the line, not just asserted.
+        assert line["periods_observed"] == 2
+        assert line["periods_required"] == 3
+
+
+def test_trends_report_states_the_thresholds_it_applied(fixture_root):
+    """The response describes its own method, so a chat summary built on it
+    can be checked rather than taken on trust."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/trends").json()
+
+    assert body["min_periods"] == 3
+    assert body["min_transactions"] == 5
+    assert body["outlier_threshold"] == "3.5"
+    assert body["flat_band"] == "0.10"
+
+
+def test_trends_report_flags_an_unusual_transaction_with_its_arithmetic(fixture_root):
+    """The fixture's Dining Out refund is far from that envelope's median.
+    Every number needed to recompute the score comes back with the flag."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/trends").json()
+
+    flagged = next(o for o in body["outliers"] if o["envelope"] == "Dining Out")
+    assert flagged["description"] == "Refund - overcharged dinner"
+    assert flagged["amount"] == "-60.00"
+    assert flagged["scale_method"] == "mad"
+    assert (
+        (Decimal(flagged["amount"]) - Decimal(flagged["median"]))
+        / Decimal(flagged["scale"])
+    ).quantize(Decimal("0.01")) == Decimal(flagged["score"])
+
+
+def test_trends_report_says_which_envelopes_it_declined_to_judge(fixture_root):
+    """"Nothing unusual" and "not enough data to look" are different answers,
+    and a summary that conflated them would be unfalsifiable."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/trends").json()
+
+    declined = {a["envelope"] for a in body["assessments"] if not a["judged"]}
+    judged = {a["envelope"] for a in body["assessments"] if a["judged"]}
+    assert "Rent" in declined
+    assert "Groceries" in judged
+    assert all(a["reason"] for a in body["assessments"])
+
+
+def test_trends_report_keeps_every_statistic_as_a_string(fixture_root):
+    """Statistics are computed in `Decimal` in the sidecar. None of them
+    crosses to the browser as a float to be finished there."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/trends").json()
+    line = body["envelopes"][0]
+
+    assert isinstance(line["slope"], str)
+    assert isinstance(line["mean"], str)
+    assert isinstance(body["outliers"][0]["score"], str)
+
+
+def test_trends_report_rejects_an_unparseable_date(fixture_root):
+    fixture_root("basic")
+    resp = TestClient(app).get("/reports/trends", params={"to": "next year"})
+    assert resp.status_code == 422
+
+
+def test_trends_report_reports_a_backwards_window_as_200_with_a_reason(fixture_root):
+    fixture_root("basic")
+    resp = TestClient(app).get(
+        "/reports/trends", params={"from": "2026-03-01", "to": "2026-01-01"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is False
+    assert resp.json()["envelopes"] == []
+
+
+# --- month-end report -----------------------------------------------------
+
+
+def test_month_end_report_composes_envelopes_budget_and_coverage(fixture_root):
+    fixture_root("basic")
+    resp = TestClient(app).get("/reports/month-end", params={"month": "2026-01"})
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["ok"] is True
+    assert body["month"] == "2026-01"
+    assert body["label"] == "January 2026"
+    assert body["from_date"] == "2026-01-01"
+    assert body["to_date"] == "2026-01-31"
+    assert body["coverage"] == "complete"
+    assert body["currency"] == "USD"
+
+    utilities = next(e for e in body["envelopes"] if e["name"] == "Utilities")
+    assert utilities["allocated"] == "100.00"
+    assert utilities["spent"] == "130.00"
+    # Over this month's budget *and* in the red overall. Two different
+    # failures, both reported, neither inferred from the other.
+    assert utilities["over_budget"] is True
+    assert utilities["overspent"] is True
+
+
+def test_month_end_money_is_strings_and_the_ratio_is_a_number(fixture_root):
+    """Money must not round-trip through a float; a consumption ratio is not
+    money and is a genuine JSON number."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/month-end", params={"month": "2026-01"}).json()
+
+    assert isinstance(body["spent_total"], str)
+    assert isinstance(body["total_spend"], str)
+    assert isinstance(body["unmapped_total"], str)
+    assert isinstance(body["available"], str)
+    groceries = next(e for e in body["envelopes"] if e["name"] == "Groceries")
+    assert isinstance(groceries["allocated"], str)
+    assert groceries["consumed_ratio"] is None or isinstance(
+        groceries["consumed_ratio"], float
+    )
+
+
+def test_month_end_defaults_to_the_ledgers_last_month(fixture_root):
+    """Not the wall-clock month: a report of a fixed ledger must not become an
+    empty one because a day passed."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/month-end").json()
+    assert body["month"] == "2026-02"
+
+
+def test_month_end_rejects_a_month_that_is_not_yyyy_mm(fixture_root):
+    """A 422 rather than a guess: unlike a refused allocation there is no
+    payload to return, because there is no month to report on."""
+    fixture_root("basic")
+    resp = TestClient(app).get("/reports/month-end", params={"month": "january"})
+    assert resp.status_code == 422
+    assert "month must be YYYY-MM" in resp.json()["detail"]
+
+
+def test_month_end_reports_uncategorized_spending_rather_than_omitting_it(fixture_root):
+    """With auto-apply off, a client that rendered only the per-envelope table
+    would show a month of real spending as a month of zeros."""
+    fixture_root("unmapped_account")
+    body = TestClient(app).get("/reports/month-end", params={"month": "2026-01"}).json()
+
+    assert body["categorization"] == "partial"
+    assert body["unmapped_total"] == "25.00"
+    assert body["unmapped_accounts"] == ["Expenses:Misc:Other"]
+    assert body["spent_total"] == "40.00"
+    assert body["total_spend"] == "65.00"
+    assert "PARTIALLY CATEGORIZED" in body["summary"]
+
+
+def test_month_end_carries_the_coverage_fields_a_card_renders_from(fixture_root):
+    """`month: "2026-01"` alone cannot distinguish a finished January from
+    four days of it, and a card that renders them identically makes an
+    incomplete month look authoritative."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/month-end", params={"month": "2026-01"}).json()
+
+    assert body["complete"] is True
+    assert body["through"] == "2026-01-31"
+    assert body["days_elapsed"] == 31
+    assert body["days_in_month"] == 31
+
+
+def test_month_end_marks_a_month_the_ledger_stops_inside_as_incomplete(fixture_root):
+    """The `basic` fixture's last transaction is 2026-02-14, so February is
+    over but only half recorded. `complete` must be False and `through` must
+    say where the data actually stops."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/month-end", params={"month": "2026-02"}).json()
+
+    assert body["complete"] is False
+    assert body["through"] == "2026-02-14"
+    assert body["days_in_month"] == 28
+
+
+def test_month_end_counts_uncategorized_transactions_not_just_their_value(fixture_root):
+    """Counts are integers and amounts are strings; the two must not merge.
+    An amount alone lets a table of zeros pass for a quiet month."""
+    fixture_root("unmapped_account")
+    body = TestClient(app).get("/reports/month-end", params={"month": "2026-01"}).json()
+
+    assert body["uncategorized_count"] == 1
+    assert body["categorized_count"] == 1
+    assert isinstance(body["uncategorized_count"], int)
+    assert isinstance(body["categorized_count"], int)
+    # The amount stays a string beside it.
+    assert isinstance(body["unmapped_total"], str)
+
+
+def test_month_end_makes_a_trend_abstention_checkable(fixture_root):
+    """`insufficient_data` alone is a verdict a caller must take on trust.
+    The period counts are what turn it into a fact."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/month-end", params={"month": "2026-02"}).json()
+
+    for env in body["envelopes"]:
+        assert env["direction"] in {"up", "down", "flat", "insufficient_data"}
+        assert isinstance(env["periods_observed"], int)
+        assert isinstance(env["periods_required"], int)
+        if env["direction"] == "insufficient_data":
+            assert env["direction_reason"]
+
+
+def test_month_end_carries_the_trend_window_and_what_it_declined_to_judge(fixture_root):
+    """"Nothing unusual" has to arrive with its own denominator, so the
+    absence of outliers is checkable rather than merely reassuring."""
+    fixture_root("basic")
+    body = TestClient(app).get("/reports/month-end", params={"month": "2026-02"}).json()
+
+    assert body["trend_from"] is not None
+    assert body["trend_to"] is not None
+    assert isinstance(body["outliers"], list)
+    assert isinstance(body["unjudged"], list)
+
+
 # --- degradation ----------------------------------------------------------
 
 
@@ -990,6 +1354,9 @@ def test_spending_report_by_year(fixture_root):
         ("get", "/sync/status/x", "bookkeeper.jobs"),
         ("get", "/transactions/search?q=x", "bookkeeper.reports.search"),
         ("get", "/reports/spending", "bookkeeper.reports.spending"),
+        ("get", "/reports/budget", "bookkeeper.reports.budget"),
+        ("get", "/reports/trends", "bookkeeper.reports.trends"),
+        ("get", "/reports/month-end", "bookkeeper.reports.monthend"),
         ("post", "/envelopes/allocate", "bookkeeper.envelope.allocate"),
         ("get", "/accounts/categorizable", "bookkeeper.categorize.context"),
     ],

@@ -92,6 +92,47 @@ option "operating_currency" "USD"
   Expenses:Unknown
 """
 
+#: Spending, a refund against it, a transfer between the user's own accounts,
+#: and the same merchant in a second currency. Everything `amount_totals` has
+#: to keep apart, in one place, all matching the single query "wholefoods".
+TOTALS_LEDGER = """\
+option "operating_currency" "USD"
+
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Assets:Checking             USD
+; No currency constraint: this account carries the GBP leg below, which is
+; the whole point of the fixture.
+2026-01-01 open Liabilities:CreditCard
+2026-01-01 open Expenses:Food:Groceries
+2026-01-01 open Expenses:Travel
+
+2026-01-01 custom "envelope" "map" "Expenses:Food:Groceries" "Groceries"
+
+2026-01-01 * "Opening balance"
+  Assets:Checking                          1000.00 USD
+  Equity:Opening-Balances
+
+2026-01-04 * "WHOLEFOODS MKT 101"
+  Assets:Checking                          -100.00 USD
+  Expenses:Food:Groceries
+
+2026-01-06 * "WHOLEFOODS MKT 101"
+  Liabilities:CreditCard                    -40.00 USD
+  Expenses:Food:Groceries
+
+2026-01-08 * "WHOLEFOODS refund"
+  Assets:Checking                            25.00 USD
+  Expenses:Food:Groceries                   -25.00 USD
+
+2026-01-10 * "WHOLEFOODS card payment"
+  Assets:Checking                           -40.00 USD
+  Liabilities:CreditCard                     40.00 USD
+
+2026-01-12 * "WHOLEFOODS LONDON"
+  Liabilities:CreditCard                    -30.00 GBP
+  Expenses:Travel                            30.00 GBP
+"""
+
 #: One account mapped to two envelopes. `build_account_map` refuses this.
 AMBIGUOUS_LEDGER = """\
 option "operating_currency" "USD"
@@ -134,6 +175,13 @@ def searchable_text(ledger):
         parts.append(entry.payee or "")
         parts.extend(posting.account for posting in entry.postings)
     return "\n".join(parts)
+
+
+@pytest.fixture(scope="module")
+def totals_ledger():
+    entries, errors, options = loader.load_string(TOTALS_LEDGER)
+    assert not errors, errors
+    return entries, errors, options
 
 
 @pytest.fixture(scope="module")
@@ -427,6 +475,157 @@ def test_an_unusable_envelope_mapping_costs_the_labels_not_the_results(ambiguous
     assert any("envelope labels omitted" in w for w in result.warnings), result.warnings
 
 
+# --- totals over the matches ----------------------------------------------
+#
+# The measured Phase 4 gap: "how much did I spend at Whole Foods" had no
+# correct tool -- search matched the text without adding it up, and the
+# spending report groups by envelope rather than by merchant. What makes this
+# hard is not the addition, it is saying honestly *what* was added: the
+# matches span accounts, currencies, and both directions, and a single figure
+# labelled "total" over that mixture is a number a user would act on and that
+# would be wrong.
+
+
+def totals_by_currency(result):
+    return {t.currency: t for t in result.amount_totals}
+
+
+def test_spending_is_totalled_over_the_matches(totals_ledger):
+    """The question the gap was about, answered directly."""
+    usd = totals_by_currency(search(totals_ledger, "wholefoods"))["USD"]
+
+    assert usd.spent == Decimal("140.00")
+    assert usd.spend_count == 2
+
+
+def test_every_figure_is_a_decimal_never_a_float(totals_ledger):
+    """A float here would put a rounding error into the one number the user
+    reads as the answer."""
+    usd = totals_by_currency(search(totals_ledger, "wholefoods"))["USD"]
+
+    for value in (usd.spent, usd.received, usd.net, usd.transferred):
+        assert isinstance(value, Decimal)
+
+
+def test_a_refund_does_not_quietly_reduce_what_was_spent(totals_ledger):
+    """Netting silently would answer "how much did I spend" with a smaller
+    number than was spent. Both directions are reported, and the difference is
+    labelled `net` rather than being the only figure offered."""
+    usd = totals_by_currency(search(totals_ledger, "wholefoods"))["USD"]
+
+    assert usd.spent == Decimal("140.00")
+    assert usd.received == Decimal("25.00")
+    assert usd.net == Decimal("115.00")
+    assert usd.receipt_count == 1
+    assert usd.net == usd.spent - usd.received
+
+
+def test_the_render_labels_the_net_figure_as_net(totals_ledger):
+    """`115.00` printed beside `spent` would be a false answer; the label is
+    what makes the number safe to read."""
+    rendered = search(totals_ledger, "wholefoods").render()
+
+    assert "spent            140.00" in rendered
+    assert "received          25.00" in rendered
+    assert "net spend        115.00" in rendered
+
+
+def test_a_transfer_between_your_own_accounts_is_excluded_and_named(totals_ledger):
+    """A card payment matches on both of its funding legs. Counted, it would
+    report the same 40.00 as both spent and received -- inflating spending and
+    then netting it back off, so "you spent nothing at Chase" on a real
+    payment."""
+    usd = totals_by_currency(search(totals_ledger, "wholefoods"))["USD"]
+
+    assert usd.transferred == Decimal("40.00")
+    assert usd.transfer_count == 1
+    # Counted once, on the outgoing leg: the incoming leg is the same money
+    # and is in this same result set.
+    assert usd.spent == Decimal("140.00")
+    assert usd.received == Decimal("25.00")
+    assert "moved between your own accounts" in search(totals_ledger, "wholefoods").render()
+
+
+def test_a_transfer_is_still_a_match_even_though_it_is_in_no_total(totals_ledger):
+    """Excluded from the figures, not hidden from the results: the user
+    searched for it and it happened."""
+    result = search(totals_ledger, "card payment")
+
+    assert result.total == 2
+    assert totals_by_currency(result)["USD"].spent == Decimal(0)
+
+
+def test_currencies_are_totalled_separately_and_never_added(totals_ledger):
+    """There is no exchange rate in the ledger. Inventing one to produce a
+    single headline figure would be worse than declining to."""
+    result = search(totals_ledger, "wholefoods")
+    totals = totals_by_currency(result)
+
+    assert set(totals) == {"GBP", "USD"}
+    assert totals["GBP"].spent == Decimal("30.00")
+    assert totals["USD"].spent == Decimal("140.00")
+    assert result.mixed_currency is True
+    # No combined figure exists anywhere in the response to be misread.
+    assert not any(t.spent == Decimal("170.00") for t in result.amount_totals)
+
+
+def test_a_mixed_currency_result_says_so_rather_than_picking_one(totals_ledger):
+    result = search(totals_ledger, "wholefoods")
+
+    assert any("no exchange rates" in w for w in result.warnings), result.warnings
+    rendered = result.render()
+    assert "GBP" in rendered
+    assert "USD" in rendered
+
+
+def test_a_single_currency_result_is_not_flagged_as_mixed(ledger):
+    result = search(ledger, "groceries")
+
+    assert result.mixed_currency is False
+    assert [t.currency for t in result.amount_totals] == ["USD"]
+    assert result.warnings == []
+
+
+def test_the_totals_name_the_accounts_they_span(totals_ledger):
+    """A figure combining a checking account and a credit card reads as one
+    account's activity unless it says otherwise."""
+    usd = totals_by_currency(search(totals_ledger, "wholefoods"))["USD"]
+
+    assert usd.accounts == ("Assets:Checking", "Liabilities:CreditCard")
+
+
+def test_totals_cover_every_match_not_just_the_page_shown(ledger):
+    """A total over the visible rows would understate the answer exactly when
+    the result was large enough for someone to need a total."""
+    full = search(ledger, "groceries")
+    limited = search(ledger, "groceries", limit=1)
+
+    assert limited.truncated is True
+    assert len(limited.matches) == 1
+    assert limited.amount_totals == full.amount_totals
+    assert "not only the 1 shown" in limited.render()
+
+
+def test_a_result_with_no_matches_has_no_totals(ledger):
+    """Rather than a zero, which is a claim about money that was never
+    examined."""
+    result = search(ledger, "kayak")
+
+    assert result.amount_totals == []
+    assert result.mixed_currency is False
+
+
+def test_a_failed_search_reports_no_totals(ledger):
+    assert search(ledger, "").amount_totals == []
+
+
+def test_totals_are_currency_ordered_so_repeated_searches_are_identical(totals_ledger):
+    assert [t.currency for t in search(totals_ledger, "wholefoods").amount_totals] == [
+        "GBP",
+        "USD",
+    ]
+
+
 # --- serialization --------------------------------------------------------
 
 
@@ -445,9 +644,24 @@ def test_to_dict_keeps_money_as_strings_and_dates_as_iso(ledger):
         "limit",
         "truncated",
         "matches",
+        "amount_totals",
+        "mixed_currency",
         "warnings",
         "errors",
     }
+
+
+def test_to_dict_keeps_the_totals_as_strings_too(totals_ledger):
+    """Money is a string end to end; a JSON number is a double."""
+    payload = search(totals_ledger, "wholefoods").to_dict()
+    usd = next(t for t in payload["amount_totals"] if t["currency"] == "USD")
+
+    assert usd["spent"] == "140.00"
+    assert usd["received"] == "25.00"
+    assert usd["net"] == "115.00"
+    assert usd["transferred"] == "40.00"
+    assert usd["accounts"] == ["Assets:Checking", "Liabilities:CreditCard"]
+    assert payload["mixed_currency"] is True
 
 
 def test_render_describes_a_hit_a_miss_and_a_truncation(ledger):

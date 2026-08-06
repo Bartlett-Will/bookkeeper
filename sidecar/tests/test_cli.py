@@ -162,3 +162,131 @@ def test_allocate_refuses_a_negative_amount(writable_fixture, capsys):
     assert main(["allocate", "Groceries", "-600.00"]) == 1
     assert "amount must be positive" in capsys.readouterr().out
     assert (root / "ledger" / "budget.beancount").read_text(encoding="utf-8") == before
+
+
+# --- budget ---------------------------------------------------------------
+
+
+def test_budget_renders_allocations_against_actual_spending(read_only_fixture, capsys):
+    read_only_fixture("basic")
+    assert main(["budget", "--from", "2026-01-01", "--to", "2026-02-28"]) == 0
+    out = capsys.readouterr().out
+    assert "Budget vs actual, 2026-01-01 to 2026-02-28 (USD)" in out
+    assert "Groceries" in out
+    assert "% used" in out
+
+
+def test_budget_defaults_to_the_ledgers_own_range(read_only_fixture, capsys):
+    read_only_fixture("basic")
+    assert main(["budget"]) == 0
+    assert "2026-01-01 to 2026-02-14" in capsys.readouterr().out
+
+
+def test_budget_always_states_the_overspend_total(read_only_fixture, capsys):
+    """Even at zero. A line that appears only sometimes is one readers stop
+    expecting, and overspend is the figure §5.2 exists to keep visible."""
+    read_only_fixture("basic")
+    assert main(["budget"]) == 0
+    assert "Overspent (total): 0.00 USD" in capsys.readouterr().out
+
+
+def test_budget_rejects_an_unparseable_date_without_a_traceback(read_only_fixture, capsys):
+    read_only_fixture("basic")
+    assert main(["budget", "--from", "last tuesday"]) == 1
+    assert "budget report failed" in capsys.readouterr().out
+
+
+def test_budget_exits_one_on_a_backwards_window(read_only_fixture, capsys):
+    read_only_fixture("basic")
+    assert main(["budget", "--from", "2026-03-01", "--to", "2026-01-01"]) == 1
+    assert "is after" in capsys.readouterr().out
+
+
+# --- trends ---------------------------------------------------------------
+
+
+def test_trends_renders_directions_and_what_it_declined_to_judge(read_only_fixture, capsys):
+    read_only_fixture("basic")
+    assert main(["trends"]) == 0
+    out = capsys.readouterr().out
+    assert "Spending trends, 2026-01-01 to 2026-02-14 (by month, USD)" in out
+    # The fixture spans two months, so every direction is an abstention with
+    # a stated reason rather than a confident "flat".
+    assert "insufficient_data" in out
+    assert "a direction needs at least 3" in out
+    assert "Not judged for outliers:" in out
+
+
+def test_trends_shows_the_arithmetic_behind_a_flag(read_only_fixture, capsys):
+    """An outlier a reader cannot interrogate is worse than none, so the
+    median, the scale and the rule that produced them are on the page."""
+    read_only_fixture("basic")
+    assert main(["trends"]) == 0
+    out = capsys.readouterr().out
+    assert "Unusual transactions (|modified z| > 3.5" in out
+    assert "Refund - overcharged dinner" in out
+    assert "median" in out and "scale" in out and "[mad]" in out
+
+
+def test_trends_rejects_an_unparseable_date_without_a_traceback(read_only_fixture, capsys):
+    read_only_fixture("basic")
+    assert main(["trends", "--to", "next year"]) == 1
+    assert "trends report failed" in capsys.readouterr().out
+
+
+def test_trends_exits_one_on_a_backwards_window(read_only_fixture, capsys):
+    read_only_fixture("basic")
+    assert main(["trends", "--from", "2026-03-01", "--to", "2026-01-01"]) == 1
+    assert "is after" in capsys.readouterr().out
+
+
+# --- month-end ------------------------------------------------------------
+
+
+def test_month_end_renders_the_composite_report(read_only_fixture, capsys):
+    read_only_fixture("basic")
+    assert main(["month-end", "--month", "2026-01"]) == 0
+    out = capsys.readouterr().out
+    assert "Month-end report — January 2026" in out
+    assert "January 2026, complete" in out
+    # Budget vs actual, the envelope table, and the cash summary all present.
+    assert "Allocated" in out and "Remaining" in out
+    assert "Available to budget" in out
+
+
+def test_month_end_defaults_to_the_ledgers_last_month(read_only_fixture, capsys):
+    """Not the wall-clock month: a fixed ledger must not start reporting an
+    empty month because a day passed."""
+    read_only_fixture("basic")
+    assert main(["month-end"]) == 0
+    assert "Month-end report — February 2026" in capsys.readouterr().out
+
+
+def test_month_end_names_an_uncategorized_month_rather_than_showing_zeros(
+    read_only_fixture, capsys
+):
+    """The failure this report is most likely to commit: every envelope figure
+    is legitimately zero and the page looks complete."""
+    read_only_fixture("unmapped_account")
+    assert main(["month-end", "--month", "2026-01"]) == 0
+    out = capsys.readouterr().out
+    assert "PARTIALLY CATEGORIZED" in out
+    assert "Expenses:Misc:Other" in out
+
+
+def test_month_end_rejects_an_unparseable_month_without_a_traceback(
+    read_only_fixture, capsys
+):
+    read_only_fixture("basic")
+    assert main(["month-end", "--month", "january"]) == 1
+    assert "month-end report failed" in capsys.readouterr().out
+
+
+def test_search_shows_a_total_over_the_matches(read_only_fixture, capsys):
+    """PLAN.md §9: the total the chat can see must be reachable headless."""
+    read_only_fixture("basic")
+    assert main(["search", "groceries"]) == 0
+    out = capsys.readouterr().out
+    assert "Totals over all 5 matching transaction(s)" in out
+    assert "spent            365.00" in out
+    assert "net spend        365.00" in out

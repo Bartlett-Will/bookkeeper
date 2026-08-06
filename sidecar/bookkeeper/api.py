@@ -934,12 +934,47 @@ class TransactionMatchModel(BaseModel):
     memo: str | None = None
 
 
+class CurrencyTotalModel(BaseModel):
+    """What the matches add up to, in one currency, in each direction.
+
+    Never one scalar. A match set spans accounts, currencies and both
+    directions, and a lone figure labelled "total" over that mixture is a
+    claim someone would act on and that would be false. `spent` and
+    `received` are kept apart so a refund cannot quietly answer "how much did
+    I spend" with a smaller number than was spent; `transferred` is money
+    moved between the user's own accounts and is in neither, because the
+    search returns both legs of a transfer and counting them would report the
+    same dollar twice.
+    """
+
+    currency: str
+    spent: Decimal
+    received: Decimal
+    net: Decimal
+    transferred: Decimal
+    spend_count: int
+    receipt_count: int
+    transfer_count: int
+    accounts: list[str]
+
+
 class TransactionSearchResponse(BaseModel):
     ok: bool
     summary: str
     query: str
     matches: list[TransactionMatchModel]
+    #: A *count* of matching transactions. The money is `amount_totals`,
+    #: named apart from this deliberately: `total` and `totals` one keystroke
+    #: apart in the generated TypeScript is a bug waiting to be written.
     total: int
+    #: One entry per currency, over *every* match rather than the `limit`ed
+    #: page in `matches` — a total over the visible rows would understate the
+    #: answer exactly when the result was large enough to need one.
+    amount_totals: list[CurrencyTotalModel]
+    #: True when the matches span more than one currency, so no combined
+    #: figure exists. The ledger carries no exchange rates; a client must
+    #: render the currencies separately rather than pick one.
+    mixed_currency: bool
     limit: int
     truncated: bool
     errors: list[str]
@@ -978,6 +1013,8 @@ def transactions_search(
         query=result.query,
         matches=[TransactionMatchModel(**asdict(m)) for m in result.matches],
         total=result.total,
+        amount_totals=[CurrencyTotalModel(**asdict(t)) for t in result.amount_totals],
+        mixed_currency=result.mixed_currency,
         limit=result.limit,
         truncated=result.truncated,
         errors=list(result.errors),
@@ -1066,6 +1103,496 @@ def reports_spending(
         total=report.total,
         unmapped_total=report.unmapped_total,
         unmapped_accounts=list(report.unmapped_accounts),
+        errors=list(report.errors),
+        warnings=list(report.warnings),
+    )
+
+
+class MonthEndEnvelopeModel(BaseModel):
+    """One envelope's month.
+
+    `overspent` and `over_budget` are two different failures. Overspent means
+    the running balance is negative — money already spent with nothing behind
+    it. Over budget means this month's spend exceeded this month's allocation,
+    which an envelope with a healthy carried balance can do without ever going
+    negative. A client that collapsed them would raise a false alarm or hide a
+    real one.
+    """
+
+    name: str
+    opening_balance: Decimal
+    allocated: Decimal
+    spent: Decimal
+    closing_balance: Decimal
+    remaining: Decimal
+    overspend: Decimal
+    #: Fraction of the allocation consumed (0.8333 is 83.33%). A ratio is not
+    #: money, so it is a `float` rather than a `Decimal` string. `None`, never
+    #: `0.0`, when nothing was allocated: 0.0 reads as untouched and 1.0 as
+    #: exhausted, and a zero budget supports neither claim.
+    consumed_ratio: float | None = None
+    #: `within` | `over` | `unbudgeted` | `unused`.
+    status: str
+    #: `up` | `down` | `flat` | `insufficient_data`, read over a trailing
+    #: window rather than this month alone. `insufficient_data` is an
+    #: abstention and is **not** `flat`: `flat` means the slope was measured
+    #: and is small. `direction_reason` says which rule fired, and the two
+    #: period counts below make the abstention checkable rather than merely
+    #: stated.
+    direction: str
+    direction_reason: str
+    periods_observed: int = 0
+    periods_required: int = 0
+    overspent: bool
+    over_budget: bool
+
+
+class MonthEndOutlierModel(BaseModel):
+    """One transaction that is unusual for its envelope.
+
+    Carries `median`, `scale` and `scale_method` with it so `score` can be
+    recomputed from this one record. A flag whose basis is not visible is not
+    a finding a user can check.
+    """
+
+    envelope: str
+    posted_date: date
+    description: str
+    amount: Decimal
+    score: Decimal
+    median: Decimal
+    scale: Decimal
+    scale_method: str
+    threshold: Decimal
+
+
+class MonthEndReportResponse(BaseModel):
+    ok: bool
+    summary: str
+    month: str
+    label: str
+    from_date: date
+    to_date: date
+    #: What the closing figures are computed at: the month's last day, or
+    #: today when the month is not over. Never a future date.
+    asof: date
+    #: `future` | `in-progress` | `no-data` | `partial` | `complete`. "So far
+    #: this month" and "for July" are different claims and a user acts on them
+    #: differently, so a client must not render them with the same words.
+    coverage: str
+    data_through: date | None = None
+    #: The last date within the month the ledger accounts for. Distinct from
+    #: `data_through` (the month's last transaction): a January whose last
+    #: transaction is the 28th is still covered to the 31st, because the
+    #: ledger continuing into February is evidence nothing happened rather
+    #: than that nobody looked. `null` only when nothing is covered — the
+    #: month has not started, or begins after the ledger's last transaction.
+    through: date | None = None
+    #: True when the month is over *and* the ledger accounts for all of it,
+    #: i.e. the figures are done moving. Deliberately not `coverage ==
+    #: "complete"`: a finished month the ledger continues past but in which
+    #: nothing happened is `no-data` and is nonetheless final.
+    complete: bool
+    #: With `days_in_month`, what lets a client say "4 of 31 days" instead of
+    #: rendering four days of August exactly like a finished July.
+    days_elapsed: int
+    days_in_month: int
+    transactions: int
+    #: Counts, not money — required alongside `unmapped_total`, not instead
+    #: of it. With auto-apply off, "$0.00 in envelopes" and "$4,102 across 87
+    #: transactions nobody has filed" are the same underlying state, and only
+    #: the second reads as something to act on.
+    #:
+    #: These need not sum to `transactions`: a split with one mapped and one
+    #: unmapped leg is honestly in both, and a transfer or paycheck is in
+    #: neither.
+    categorized_count: int
+    uncategorized_count: int
+    currency: str
+    envelopes: list[MonthEndEnvelopeModel]
+    opening_total: Decimal
+    allocated_total: Decimal
+    spent_total: Decimal
+    closing_total: Decimal
+    #: Spending this month that reached no envelope. With auto-apply off,
+    #: nearly everything still posts to `Expenses:Unknown`, and a client that
+    #: rendered only the per-envelope table would show a month of real
+    #: spending as a month of zeros.
+    unmapped_total: Decimal
+    unmapped_accounts: list[str]
+    #: `spent_total + unmapped_total` — the month's actual spending, and the
+    #: denominator the per-envelope table must be read against.
+    total_spend: Decimal
+    #: `none` | `partial` | `full` | `no-spend`.
+    categorization: str
+    categorized_share: Decimal
+    budgeted_cash: Decimal
+    available: Decimal
+    total_overspend: Decimal
+    #: Unusual transactions dated within the reported month, judged against
+    #: the trailing window `trend_from`..`trend_to` — a month is too short to
+    #: be its own baseline.
+    outliers: list[MonthEndOutlierModel]
+    trend_from: date | None = None
+    trend_to: date | None = None
+    #: Envelopes with too little history to judge for outliers. Present so a
+    #: client can say "nothing unusual among the N we could check" instead of
+    #: the unfalsifiable "nothing looks unusual".
+    unjudged: list[str]
+    errors: list[str]
+    warnings: list[str]
+
+
+@app.get("/reports/month-end", response_model=MonthEndReportResponse)
+def reports_month_end(month: str | None = None) -> MonthEndReportResponse:
+    """The composite month-end report: envelopes, budget vs actual, unmapped.
+
+    `month` is `YYYY-MM` and defaults to the month of the ledger's last
+    transaction rather than the wall-clock month, for the same reason
+    `/reports/spending` defaults its window off the ledger's own bounds: a
+    report of a fixed ledger must not become an empty one because a day
+    passed.
+
+    An unparseable `month` is a 422 — unlike a refused allocation there is no
+    useful payload to return, because there is no month to report on.
+    """
+    month_end_report = _module_callable("bookkeeper.reports.monthend", "month_end_report")
+    entries, errors, options = _ledger_cache.get()
+    if errors:
+        # Budget figures derived from a ledger that did not parse would be
+        # confidently wrong, and this is the report a user reads as final.
+        raise HTTPException(
+            status_code=500,
+            detail=f"ledger failed to load ({len(errors)} error(s)); see /verify",
+        )
+    try:
+        report = month_end_report(month, entries=entries, errors=errors, options=options)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return MonthEndReportResponse(
+        ok=report.ok,
+        summary=report.render(),
+        month=report.month,
+        label=report.label,
+        from_date=report.from_date,
+        to_date=report.to_date,
+        asof=report.asof,
+        coverage=report.coverage,
+        data_through=report.data_through,
+        through=report.through,
+        complete=report.complete,
+        days_elapsed=report.days_elapsed,
+        days_in_month=report.days_in_month,
+        transactions=report.transactions,
+        categorized_count=report.categorized_count,
+        uncategorized_count=report.uncategorized_count,
+        currency=report.currency,
+        envelopes=[
+            MonthEndEnvelopeModel(
+                name=e.name,
+                opening_balance=e.opening_balance,
+                allocated=e.allocated,
+                spent=e.spent,
+                closing_balance=e.closing_balance,
+                remaining=e.remaining,
+                overspend=e.overspend,
+                consumed_ratio=e.consumed_ratio,
+                status=e.status,
+                direction=e.direction,
+                direction_reason=e.direction_reason,
+                periods_observed=e.periods_observed,
+                periods_required=e.periods_required,
+                overspent=e.overspent,
+                over_budget=e.over_budget,
+            )
+            for e in report.envelopes
+        ],
+        opening_total=report.opening_total,
+        allocated_total=report.allocated_total,
+        spent_total=report.spent_total,
+        closing_total=report.closing_total,
+        unmapped_total=report.unmapped_total,
+        unmapped_accounts=list(report.unmapped_accounts),
+        total_spend=report.total_spend,
+        categorization=report.categorization,
+        categorized_share=report.categorized_share,
+        budgeted_cash=report.budgeted_cash,
+        available=report.available,
+        total_overspend=report.total_overspend,
+        outliers=[MonthEndOutlierModel(**asdict(o)) for o in report.outliers],
+        trend_from=report.trend_from,
+        trend_to=report.trend_to,
+        unjudged=list(report.unjudged),
+        errors=list(report.errors),
+        warnings=list(report.warnings),
+    )
+
+
+class BudgetLineModel(BaseModel):
+    """One envelope's allocation against its actual spending over a window.
+
+    `consumed_ratio` is nullable and that is load-bearing, not laziness: an
+    allocation of zero has no ratio, and both plausible substitutes are wrong
+    in opposite directions (0 reads as untouched, 1 as exhausted). `null` is
+    the only value a client cannot misread, and TypeScript will make it
+    handle the case.
+
+    The type asymmetry on the next three fields is deliberate. A ratio is not
+    money, so `consumed_ratio` is a genuine JSON number; `overspend` is money
+    and therefore a `Decimal` rendered as a string. `overspent` is a
+    server-computed boolean so the UI reads a flag rather than deriving one
+    by parsing a string -- a browser cannot do `Decimal` arithmetic and must
+    not try. This mirrors `EnvelopeBalanceModel`, which carries the same pair
+    for the same reason after the Phase 3 `available` fix.
+    """
+
+    name: str
+    allocated: Decimal
+    spent: Decimal
+    remaining: Decimal
+    consumed_ratio: float | None = None
+    status: str
+    overspent: bool
+    overspend: Decimal
+    carried_in: Decimal
+    balance: Decimal
+
+
+class BudgetReportResponse(BaseModel):
+    ok: bool
+    summary: str
+    from_date: date
+    to_date: date
+    currency: str
+    envelopes: list[BudgetLineModel]
+    total_allocated: Decimal
+    total_spent: Decimal
+    total_remaining: Decimal
+    total_overspend: Decimal
+    #: Spending in the window that belongs to no envelope, and therefore to
+    #: no budget line. With auto-apply off nearly everything still posts to
+    #: `Expenses:Unknown`, so a report that omitted this would read as "you
+    #: spent nothing".
+    unmapped_total: Decimal
+    unmapped_accounts: list[str]
+    errors: list[str]
+    warnings: list[str]
+
+
+@app.get("/reports/budget", response_model=BudgetReportResponse)
+def reports_budget(
+    from_date: str | None = Query(default=None, alias="from"),
+    to: str | None = None,
+) -> BudgetReportResponse:
+    """Allocated vs actually spent per envelope. Both bounds inclusive and optional.
+
+    Defaults to the ledger's own first and last transaction dates rather than
+    a wall-clock window, for the reason `/reports/spending` does: a report of
+    a fixed ledger must not change meaning because a day passed.
+
+    An unparseable date is a 422 -- there is no useful payload to return,
+    since the request cannot be answered at all. A backwards window is a 200
+    with `ok: false`, because that request *was* answered: the answer is that
+    it describes no window.
+    """
+    budget_report = _module_callable("bookkeeper.reports.budget", "budget_report")
+    entries, errors, options = _ledger_cache.get()
+    if errors:
+        raise HTTPException(
+            status_code=500,
+            detail=f"ledger failed to load ({len(errors)} error(s)); see /verify",
+        )
+    try:
+        report = budget_report(from_date, to, entries=entries, errors=errors, options=options)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return BudgetReportResponse(
+        ok=report.ok,
+        summary=report.render(),
+        from_date=report.from_date,
+        to_date=report.to_date,
+        currency=report.currency,
+        # Field by field rather than `**asdict(line)`: `overspent` is a
+        # derived property, not a dataclass field, so `asdict` would drop it
+        # and the model would reject the call. Spelling it out keeps the
+        # derivation on the one side that owns it.
+        envelopes=[
+            BudgetLineModel(
+                name=line.name,
+                allocated=line.allocated,
+                spent=line.spent,
+                remaining=line.remaining,
+                consumed_ratio=line.consumed_ratio,
+                status=line.status,
+                overspent=line.overspent,
+                overspend=line.overspend,
+                carried_in=line.carried_in,
+                balance=line.balance,
+            )
+            for line in report.envelopes
+        ],
+        total_allocated=report.total_allocated,
+        total_spent=report.total_spent,
+        total_remaining=report.total_remaining,
+        total_overspend=report.total_overspend,
+        unmapped_total=report.unmapped_total,
+        unmapped_accounts=list(report.unmapped_accounts),
+        errors=list(report.errors),
+        warnings=list(report.warnings),
+    )
+
+
+class EnvelopeTrendModel(BaseModel):
+    """One envelope's direction, with the figures the verdict was read from.
+
+    `slope`, `mean` and `relative_slope` are returned as the values actually
+    used, so a client can recompute the classification instead of taking it
+    on faith. They are `Decimal` and therefore JSON strings: a trend
+    statistic is derived from money and must not be finished in a float in
+    the browser.
+
+    `direction` is one of `up`, `down`, `flat`, `insufficient_data`. The
+    fourth is abstention and is *not* `flat`: `flat` means the slope was
+    measured and is small, which is a finding a user acts on differently
+    from "we don't know yet". It is a fourth enum value rather than a null
+    `direction` so a client is never asked to infer abstention from an
+    absence. `reason`, `periods_observed` and `periods_required` make the
+    verdict interrogable either way.
+    """
+
+    name: str
+    direction: str
+    periods_observed: int
+    periods_required: int
+    total: Decimal
+    mean: Decimal
+    slope: Decimal
+    relative_slope: Decimal | None = None
+    reason: str
+    points: list[SpendPointModel]
+
+
+class OutlierModel(BaseModel):
+    """One transaction that is unusual for its envelope.
+
+    Deliberately self-contained: `median`, `scale` and `threshold` travel
+    with the flag so `(amount - median) / scale` can be recomputed from a
+    single card. An outlier a user cannot interrogate is worse than none, and
+    a chat surface renders these one at a time.
+    """
+
+    envelope: str
+    posted_date: date
+    description: str
+    amount: Decimal
+    score: Decimal
+    median: Decimal
+    scale: Decimal
+    scale_method: str
+    threshold: Decimal
+
+
+class OutlierAssessmentModel(BaseModel):
+    """Whether an envelope was judged for outliers at all, and on what basis.
+
+    Present for every envelope so that "nothing unusual" stays
+    distinguishable from "not enough data to look". Collapsing the two is how
+    a report ends up asserting the unfalsifiable "nothing looks unusual".
+    """
+
+    envelope: str
+    sample_size: int
+    judged: bool
+    reason: str
+    median: Decimal | None = None
+    scale: Decimal | None = None
+    scale_method: str = ""
+    outliers_found: int = 0
+
+
+class TrendsReportResponse(BaseModel):
+    ok: bool
+    summary: str
+    from_date: date
+    to_date: date
+    currency: str
+    periods: list[str]
+    envelopes: list[EnvelopeTrendModel]
+    outliers: list[OutlierModel]
+    assessments: list[OutlierAssessmentModel]
+    unmapped_total: Decimal
+    unmapped_accounts: list[str]
+    unmapped_transactions: int
+    #: The thresholds this run applied, echoed so the response describes its
+    #: own method. A tool result that states a finding without the rule that
+    #: produced it is exactly the unfalsifiable claim §5.3 warns about.
+    min_periods: int
+    flat_band: Decimal
+    min_transactions: int
+    outlier_threshold: Decimal
+    errors: list[str]
+    warnings: list[str]
+
+
+@app.get("/reports/trends", response_model=TrendsReportResponse)
+def reports_trends(
+    from_date: str | None = Query(default=None, alias="from"),
+    to: str | None = None,
+) -> TrendsReportResponse:
+    """Spending direction per envelope, and transactions unusual for theirs.
+
+    Monthly periods only, and deliberately: an envelope budget is a monthly
+    instrument (§5.2), and a granularity parameter would let a caller pick
+    the one that produced the answer it wanted.
+
+    Same error split as `/reports/budget`: an unparseable date is a 422, a
+    window that describes nothing is a 200 with `ok: false`.
+    """
+    trends_report = _module_callable("bookkeeper.reports.trends", "trends_report")
+    entries, errors, options = _ledger_cache.get()
+    if errors:
+        raise HTTPException(
+            status_code=500,
+            detail=f"ledger failed to load ({len(errors)} error(s)); see /verify",
+        )
+    try:
+        report = trends_report(from_date, to, entries=entries, errors=errors, options=options)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return TrendsReportResponse(
+        ok=report.ok,
+        summary=report.render(),
+        from_date=report.from_date,
+        to_date=report.to_date,
+        currency=report.currency,
+        periods=list(report.periods),
+        envelopes=[
+            EnvelopeTrendModel(
+                name=t.name,
+                direction=t.direction,
+                periods_observed=t.periods_observed,
+                periods_required=t.periods_required,
+                total=t.total,
+                mean=t.mean,
+                slope=t.slope,
+                relative_slope=t.relative_slope,
+                reason=t.reason,
+                points=[SpendPointModel(period=p.period, amount=p.amount) for p in t.points],
+            )
+            for t in report.envelopes
+        ],
+        outliers=[OutlierModel(**asdict(o)) for o in report.outliers],
+        assessments=[OutlierAssessmentModel(**asdict(a)) for a in report.assessments],
+        unmapped_total=report.unmapped_total,
+        unmapped_accounts=list(report.unmapped_accounts),
+        unmapped_transactions=report.unmapped_transactions,
+        min_periods=report.min_periods,
+        flat_band=report.flat_band,
+        min_transactions=report.min_transactions,
+        outlier_threshold=report.outlier_threshold,
         errors=list(report.errors),
         warnings=list(report.warnings),
     )
