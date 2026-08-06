@@ -647,6 +647,30 @@ categorization accuracy and tool-calling reliability, measuring latency under th
 **Exit:** an accuracy/latency table backing the model choice; month-end report
 rendered in chat.
 
+> **Split, 2026-08-05: reports now, bake-off deferred.** The reports half is
+> being built; the three-way model comparison is **not**, and the exit criterion
+> is explicitly only half met rather than quietly counted as done.
+>
+> The reason is §3.2's own budget. Only `qwen3:8b` (5.2 GB) is installed. Phi-4
+> 14B and a Gemma candidate are roughly 15 GB of downloads onto a 17 GB machine,
+> and §3.2 already says a 14B at Q4 "fits only if nothing else is running" — so
+> measuring one honestly means closing the rest of the desktop, not just finding
+> the disk. That is the user's call to make, and they deferred it. The `Makefile`
+> takes the same position for the same reason: it checks the model is present
+> and warns, and refuses to pull multi-GB weights on anyone's behalf.
+>
+> What this costs: the model choice stays justified by §3.3's published
+> benchmarks plus the tool-calling and latency numbers measured on `qwen3:8b`
+> here — good evidence for "Qwen3-8B works", no evidence for "Qwen3-8B is the
+> best of the three". Phi-4 14B remains the candidate §5.3 names for batch
+> categorization, where latency is irrelevant and reasoning may help on novel
+> merchant strings, and that is still untested.
+>
+> Everything else in this phase proceeds. The bake-off is a bounded, resumable
+> piece of work: pull two models, run the existing harnesses
+> (`web/scripts/measure-tool-selection.ts` for tool calling, `bookkeeper eval`
+> for categorization accuracy), fill in the table.
+
 ### Phase 6 — Real data
 Claim a real SimpleFIN token, backfill history, reconcile against actual
 statements, tune envelopes and rules against real spending.
