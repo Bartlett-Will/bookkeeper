@@ -149,11 +149,38 @@ class SyncResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     beancount_version: str
+    #: Which ledger this process is actually serving.
+    #:
+    #: Present because *no other response can answer it*. Several sidecars run
+    #: side by side during development -- the real ledger, fixture trees, and
+    #: throwaway copies -- and a copy returns byte-identical balances, account
+    #: lists and queue totals to the original. No value-based probe can tell
+    #: them apart, so identifying a server previously meant reading
+    #: `BOOKKEEPER_ROOT` out of its process environment from outside. That is
+    #: not available to the browser, and it is the check you most want
+    #: immediately before a write.
+    #:
+    #: Not a credential. PLAN.md §9 protects the SimpleFIN Access URL and
+    #: account credentials; a local directory path is neither, and
+    #: `/envelopes/allocate` already returns `path` on every response.
+    root: str
 
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok", beancount_version=beancount.__version__)
+    """Liveness, the beancount version, and which ledger is being served.
+
+    `root` is what `paths.root()` actually computed, symlink-resolved --
+    deliberately not the `BOOKKEEPER_ROOT` env var. An unset var must report
+    the real repo path rather than an empty string, because the whole value
+    of the field is that it answers without the caller knowing how the
+    process was configured.
+    """
+    return HealthResponse(
+        status="ok",
+        beancount_version=beancount.__version__,
+        root=str(paths.root().resolve()),
+    )
 
 
 @app.post("/sync", response_model=SyncResponse)

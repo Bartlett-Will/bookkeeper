@@ -41,6 +41,17 @@ export default defineConfig({
       },
     },
 
+    // HTTP-level contract tests for the /api/bookkeeper proxies. No browser:
+    // these drive the routes through `request` and assert on the error
+    // envelope. They deliberately stop at input validation, so they need no
+    // sidecar and never touch a ledger.
+    // Anchored on `tests/` because the repository directory is itself named
+    // "…-bookkeeper", so a bare /bookkeeper\// matches every absolute path.
+    {
+      name: "bookkeeper-api",
+      testMatch: /tests[/\\]bookkeeper[/\\].*\.test\.ts$/,
+    },
+
     // {
     //   name: 'firefox',
     //   use: { ...devices['Desktop Firefox'] },

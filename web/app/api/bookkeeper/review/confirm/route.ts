@@ -56,7 +56,20 @@ function validate(body: unknown): ConfirmRequest | string {
     return `confirmations[${badIndex}] must have string \`asset_account\`, \`simplefin_id\`, and \`account\``;
   }
 
-  return { confirmations };
+  // Rebuilt field by field rather than forwarded, because the sidecar's models
+  // are `extra="forbid"` and `ConfirmationModel` is strict too. A UI-only key
+  // on a single card — a selection flag, a React key, a debug field — would
+  // otherwise 422 the *whole* batch, failing forty confirmations because of
+  // one stray property the browser added and no code here ever named.
+  return {
+    confirmations: confirmations.map(
+      ({ account, asset_account, simplefin_id }: Confirmation) => ({
+        account,
+        asset_account,
+        simplefin_id,
+      })
+    ),
+  };
 }
 
 export async function POST(request: NextRequest) {

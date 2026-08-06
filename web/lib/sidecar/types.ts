@@ -16,7 +16,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health */
+        /**
+         * Health
+         * @description Liveness, the beancount version, and which ledger is being served.
+         *
+         *     `root` is what `paths.root()` actually computed, symlink-resolved --
+         *     deliberately not the `BOOKKEEPER_ROOT` env var. An unset var must report
+         *     the real repo path rather than an empty string, because the whole value
+         *     of the field is that it answers without the caller knowing how the
+         *     process was configured.
+         */
         get: operations["health_health_get"];
         put?: never;
         post?: never;
@@ -645,6 +654,8 @@ export interface components {
             status: string;
             /** Beancount Version */
             beancount_version: string;
+            /** Root */
+            root: string;
         };
         /** LedgerAccountModel */
         LedgerAccountModel: {

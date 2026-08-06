@@ -362,6 +362,36 @@ describe("toAllocation", () => {
     assert.deepEqual(allocation.known_envelopes, ["Groceries", "Transport"]);
   });
 
+  it('reports "0" for a refused amount — which is NOT bug 2 coming back', () => {
+    // A trap worth pinning. `AllocateResult.amount` defaults to `Decimal(0)`
+    // and a refusal never sets it, so a rejected allocation returns the amount
+    // that was *not* allocated — `"0"`, not the "50.00" that was requested.
+    //
+    // `"0"` is also exactly what bug 2 produced on a *successful* allocation,
+    // when the unwrapping heuristic read the git commit instead of the payload.
+    // Same value, opposite meanings, so `amount` alone cannot tell them apart:
+    // `ok` is the discriminator, and any future assertion about `amount` has to
+    // be gated on it. Confirmed live against the sandbox.
+    const refused = toAllocation(
+      {
+        allocated_on: null,
+        amount: "0",
+        commit: null,
+        envelope: "Groccerys",
+        errors: ["'Groccerys' is not an envelope in this ledger"],
+        known_envelopes: ["Groceries", "Transport"],
+        ok: false,
+        summary: "allocate failed",
+      },
+      { currency: "USD", envelope: "Groccerys" }
+    );
+
+    assert.equal(refused.ok, false, "ok is the discriminator, not amount");
+    assert.equal(refused.amount, "0");
+    assert.equal(refused.allocated_on, null);
+    assert.equal(refused.commit, null);
+  });
+
   it("treats an unrecognised body as a refusal, never as a write", () => {
     // The safe default on the one tool that writes: if we cannot tell that it
     // succeeded, we must not say it did.

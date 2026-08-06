@@ -1144,3 +1144,62 @@ def test_response_models_stay_permissive():
     schemas = app.openapi()["components"]["schemas"]
     for name in ("AllocateResponse", "SyncStatusResponse", "ReviewQueueResponse"):
         assert schemas[name].get("additionalProperties") is not False, name
+
+
+# --- which ledger am I talking to? ----------------------------------------
+
+
+def test_health_reports_the_resolved_ledger_root(bookkeeper_root):
+    """The field exists because nothing else can answer this question.
+
+    A copy of a ledger returns byte-identical balances, account lists and
+    queue totals to the original, so no value-based probe distinguishes a
+    throwaway sandbox from the user's real records -- which is precisely the
+    distinction you need immediately before a write.
+    """
+    body = TestClient(app).get("/health").json()
+
+    assert body["root"] == str(bookkeeper_root.resolve())
+    assert body["root"] == str(paths.root().resolve())
+
+
+def test_health_reports_the_real_root_when_the_env_var_is_unset(monkeypatch):
+    """An unset `BOOKKEEPER_ROOT` must report the *computed* path, not an
+    empty string or a null.
+
+    The whole value of the field is that it answers without the caller
+    knowing how the process was configured -- a null here would leave someone
+    choosing a POST target exactly as blind as before.
+    """
+    monkeypatch.delenv("BOOKKEEPER_ROOT", raising=False)
+    body = TestClient(app).get("/health").json()
+
+    assert body["root"]
+    assert body["root"] == str(paths.root().resolve())
+    assert Path(body["root"]).is_absolute()
+
+
+def test_health_distinguishes_two_ledgers_that_are_otherwise_identical(
+    tmp_path, monkeypatch
+):
+    """The property that matters, stated as a test.
+
+    A byte-for-byte copy of the real ledger is indistinguishable from it on
+    every other endpoint. `/health` must separate them, or the endpoint has
+    not earned its place.
+    """
+    client = TestClient(app)
+
+    monkeypatch.delenv("BOOKKEEPER_ROOT", raising=False)
+    real_root = client.get("/health").json()["root"]
+
+    copy = tmp_path / "copy-of-the-real-ledger"
+    shutil.copytree(paths.ledger_dir(), copy / "ledger")
+    monkeypatch.setenv("BOOKKEEPER_ROOT", str(copy))
+    copy_root = client.get("/health").json()["root"]
+
+    assert copy_root != real_root, (
+        "/health cannot tell a ledger copy from the real one; the field is useless "
+        "for the case it exists to serve"
+    )
+    assert copy_root == str(copy.resolve())
