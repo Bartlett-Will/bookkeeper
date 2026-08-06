@@ -30,6 +30,20 @@ Outside the ledger's span there is no evidence either way. Only the second
 is dropped, and the narrowing is reported as a warning rather than done
 quietly.
 
+It is clamped to whole **months**, not to the transaction dates, and the
+distinction is the whole of the trailing edge. A window is what the report
+*covers*; the last transaction is where the data *stops*, and they are not
+the same claim -- a January whose last transaction is the 28th is still
+covered through the 31st, because the ledger continuing afterwards is
+evidence that nothing happened rather than evidence that nobody looked.
+Since the month is the unit being measured, trimming a window back to the
+last transaction inside its final month relabels the window without changing
+one figure in it. Measured on a rent fixed at 1000.00 through 2026-06-03:
+asking through 2026-06-30 gives `flat` over six periods either way, while
+asking through 2026-07-31 invents a seventh, empty month and reports `down`
+at -107.14 a month. The first is a label; the second is a phantom period.
+Only phantom periods are removed.
+
 Outlier detection is unaffected by this and always was: observations are
 drawn from transactions, not from periods, so a range holding no
 transactions contributes nothing to a median and cannot shift a score. The

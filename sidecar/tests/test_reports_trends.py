@@ -584,9 +584,10 @@ def test_to_dict_carries_an_undefined_relative_slope_as_null(half_year):
 def test_render_shows_the_verdicts_the_flags_and_what_was_declined(half_year):
     text = half_year.render()
 
-    # 2026-06-11, not the requested 2026-06-30: the window is reported as the
-    # one actually analysed, clamped to the ledger's last transaction.
-    assert "Spending trends, 2026-01-01 to 2026-06-11 (by month, USD)" in text
+    # The requested 2026-06-30, not the last transaction's 2026-06-11: the
+    # window covers the whole of June, and the ledger stopping on the 11th is
+    # evidence nothing happened after it, not evidence nobody looked.
+    assert "Spending trends, 2026-01-01 to 2026-06-30 (by month, USD)" in text
     assert "up" in text and "down" in text and "flat" in text
     assert "insufficient_data" in text
     assert "Rent charged twice" in text
@@ -719,18 +720,27 @@ def test_too_short_a_ledger_still_abstains_however_wide_the_request(
     assert f"at least {MIN_PERIODS}" in rent.reason
 
 
-def test_an_over_wide_window_changes_nothing_at_all(fixed_cost_ledger):
-    """Not merely "does not change the verdict" -- every figure is identical,
-    so there is no residue of the requested range anywhere in the report."""
+def test_an_over_wide_window_measures_exactly_what_the_natural_one_does(
+    fixed_cost_ledger,
+):
+    """Not merely "does not change the verdict" -- every measured figure is
+    identical, so no residue of the requested range reaches any statistic.
+
+    The reported `to_date` legitimately differs (2026-06-30 against the
+    ledger's own 2026-06-03) because a window covers whole months. That is a
+    label, and the periods below are the proof it is only a label."""
     natural = report(fixed_cost_ledger)
     over_wide = report(fixed_cost_ledger, "2020-01-01", "2030-01-01")
 
-    assert over_wide.from_date == natural.from_date
-    assert over_wide.to_date == natural.to_date
     assert over_wide.periods == natural.periods
     assert [e.to_dict() for e in over_wide.envelopes] == [
         e.to_dict() for e in natural.envelopes
     ]
+    assert over_wide.from_date == natural.from_date
+    assert (over_wide.to_date.year, over_wide.to_date.month) == (
+        natural.to_date.year,
+        natural.to_date.month,
+    )
 
 
 def test_the_narrowing_is_reported_rather_than_done_quietly(fixed_cost_ledger):
@@ -796,3 +806,35 @@ def test_outlier_detection_is_unaffected_by_the_requested_window(ledger):
     assert [a.to_dict() for a in over_wide.assessments] == [
         a.to_dict() for a in natural.assessments
     ]
+
+
+def test_a_window_ending_inside_the_final_month_is_not_narrowed(fixed_cost_ledger):
+    """A window is what the report *covers*; the last transaction is where the
+    data *stops*. The fixture's last rent is 2026-06-03, and a request through
+    2026-06-30 still covers the whole of June -- the ledger continuing past the
+    3rd with nothing in it is evidence that nothing happened, not evidence that
+    nobody looked. Trimming here would relabel the window without changing a
+    single figure in it."""
+    result = report(fixed_cost_ledger, "2026-01-01", "2026-06-30")
+
+    assert result.to_date == date(2026, 6, 30)
+    assert result.periods[-1] == "2026-06"
+    assert not any("window narrowed" in w for w in result.warnings), result.warnings
+    assert trend(result, "Rent").direction == "flat"
+
+
+def test_one_month_past_the_ledger_is_a_phantom_period_and_is_dropped(
+    fixed_cost_ledger,
+):
+    """The boundary case, and the one that decides the rule. July holds no
+    data at all, so counting it as a month of zero spending turns a rent fixed
+    at 1000.00 into `down` at -107.14 a month. One empty month is enough."""
+    result = report(fixed_cost_ledger, "2026-01-01", "2026-07-31")
+    rent = trend(result, "Rent")
+
+    assert result.to_date == date(2026, 6, 30)
+    assert result.periods[-1] == "2026-06"
+    assert rent.periods_observed == 6
+    assert rent.direction == "flat"
+    assert rent.slope == Decimal("0.00")
+    assert any("window narrowed" in w for w in result.warnings)
