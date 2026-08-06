@@ -39,7 +39,6 @@ import type { ReactNode } from "react";
 import { BudgetChart } from "./budget-chart";
 import { monthEndBudgetLines } from "./budget-scales";
 import { CARD_CHROME } from "./card-chrome";
-import { EnvelopeCard } from "./envelope-card";
 import { formatAmount, formatDate, pluralize } from "./format";
 import {
   type CategorizationDescription,
@@ -86,8 +85,8 @@ export function MonthEndCard({ report }: { report: MonthEndReportData }) {
             report={report}
           />
 
-          <ReportSection title="Envelopes">
-            <EnvelopeCard report={toEnvelopeReport(report)} variant="section" />
+          <ReportSection title="How each envelope finished">
+            <EnvelopeMonthList report={report} />
           </ReportSection>
 
           <ReportSection title="Budget vs actual">
@@ -293,7 +292,7 @@ function MonthEndBudget({ report }: { report: MonthEndReportData }) {
  * Direction per envelope, with abstention kept visibly apart from "steady".
  *
  * Reads the same `describeDirection` the trends card does, so the month-end
- * report cannot grow a more forgiving interpretation of `undetermined`.
+ * report cannot grow a more forgiving interpretation of `insufficient_data`.
  * Abstaining envelopes are grouped below the judged ones with a count in the
  * heading, and carry no figure — the sidecar's `direction_reason` instead.
  */
@@ -353,7 +352,8 @@ function DirectionList({ envelopes }: { envelopes: MonthEndEnvelope[] }) {
                     direction: envelope.direction,
                     mean: "0",
                     name: envelope.name,
-                    periods_observed: 0,
+                    periods_observed: envelope.periods_observed,
+                    periods_required: envelope.periods_required,
                     points: [],
                     reason: envelope.direction_reason,
                     relative_slope: null,
@@ -416,29 +416,96 @@ function OutlierSection({ report }: { report: MonthEndReportData }) {
 }
 
 /**
- * The month-end payload's envelope totals, as `EnvelopeCard` reads them.
+ * How each envelope opened, moved and closed over the month.
  *
- * The month-end report is a closed month, so `closing_total` is the balance in
- * envelopes at its end. `EnvelopeBalance` wants `balance` and `overspent` per
- * row, which `MonthEndEnvelope` supplies directly.
+ * Written rather than delegated to `EnvelopeCard`, and that is a correction:
+ * forcing `MonthEndEnvelope` into `EnvelopeReportData` produced a real defect,
+ * caught on screen. `EnvelopeBalance.overspend` means "how far the *balance*
+ * went negative", while the month payload's `overspend` means "how far this
+ * month's spend exceeded this month's allocation" — two different quantities
+ * with the same name. Transport rendered as "over by US$0.00": flagged
+ * `overspent` on its balance, with a budget overspend of zero.
+ *
+ * The month payload simply has no per-envelope balance-overspend figure, so
+ * this list does not print one. It shows the closing balance, which is the
+ * quantity that actually exists, and lets the sign carry the bad news. The
+ * aggregate `total_overspend` is real and is stated above, in the headline.
  */
-function toEnvelopeReport(report: MonthEndReportData) {
-  return {
-    asof: report.asof,
-    available: report.available,
-    budgeted_cash: report.budgeted_cash,
-    envelopes: report.envelopes.map((envelope) => ({
-      allocated: envelope.allocated,
-      balance: envelope.closing_balance,
-      name: envelope.name,
-      overspend: envelope.overspend,
-      overspent: envelope.overspent,
-      spent: envelope.spent,
-    })),
-    summary: "",
-    total_envelope_balance: report.closing_total,
-    total_overspend: report.total_overspend,
-  };
+function EnvelopeMonthList({ report }: { report: MonthEndReportData }) {
+  if (report.envelopes.length === 0) {
+    return (
+      <p className="text-[12px] text-muted-foreground">
+        No envelopes are defined.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="space-y-1.5">
+      {report.envelopes.map((envelope) => (
+        <li
+          className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5"
+          key={envelope.name}
+        >
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate font-medium text-[13px] text-foreground">
+              {envelope.name}
+            </span>
+            {/*
+              The balance verdict, as a word rather than a figure this payload
+              does not carry. Distinct from the budget badge in the section
+              below, which is about the month's allocation.
+            */}
+            {envelope.overspent ? (
+              <span className="flex shrink-0 items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 font-medium text-[11px] text-destructive">
+                <OverIcon />
+                balance negative
+              </span>
+            ) : null}
+          </span>
+          <span className="flex shrink-0 items-baseline gap-2 text-[12px] tabular-nums">
+            <span className="text-muted-foreground">
+              {formatAmount(envelope.opening_balance, report.currency)} →
+            </span>
+            <span
+              className={
+                envelope.overspent
+                  ? "font-medium text-[13px] text-destructive"
+                  : "font-medium text-[13px] text-foreground"
+              }
+            >
+              {formatAmount(envelope.closing_balance, report.currency)}
+            </span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function OverIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="size-3 shrink-0"
+      fill="none"
+      viewBox="0 0 12 12"
+    >
+      <path
+        d="M6 1.5 11 10.5H1L6 1.5Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.2"
+      />
+      <path
+        d="M6 5v2.2"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.2"
+      />
+      <circle cx="6" cy="9" fill="currentColor" r="0.6" />
+    </svg>
+  );
 }
 
 function Figure({

@@ -165,7 +165,7 @@ function BudgetRowView({
   layout: Layout;
   row: BudgetRow;
 }) {
-  const consumed = formatConsumed(row.line.percent_consumed);
+  const consumed = formatConsumed(row.line.consumed_ratio);
 
   return (
     <li>
@@ -241,7 +241,14 @@ function MeasuredTrack({ layout, row }: { layout: Layout; row: BudgetRow }) {
     <div aria-hidden="true" className="relative mt-1.5 h-2 w-full">
       <div className="absolute inset-0 rounded-full bg-muted" />
 
-      <div className="absolute inset-y-0 left-0 flex">
+      {/*
+        `inset-0`, not `inset-y-0 left-0`. The segments below are sized as a
+        percentage of this container, so without a width it collapses and every
+        bar renders as nothing — which is exactly what it did until a
+        screenshot caught it. Typechecking cannot see this; the chart looked
+        like an empty track with a tick on it.
+      */}
+      <div className="absolute inset-0 flex">
         <div
           className="h-2 rounded-l-full bg-primary"
           style={{ width: `${row.withinFraction * 100}%` }}

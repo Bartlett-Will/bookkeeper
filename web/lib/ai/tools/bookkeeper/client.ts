@@ -10,6 +10,12 @@
 // only by button clicks hitting the API directly (§5.3 rule 2), so it is not
 // in the port at all rather than merely unused by a tool.
 
+import type {
+  CurrencyTotal as WireCurrencyTotal,
+  MonthEndReportResponse as WireMonthEnd,
+  MonthEndEnvelope as WireMonthEndEnvelope,
+} from "@/lib/sidecar/contract";
+
 /**
  * Errors are values, never exceptions.
  *
@@ -265,14 +271,38 @@ export type MonthEndEnvelope = {
   /** Allocated less spent, for this month alone. Signed by the sidecar. */
   remaining: string;
   overspend: string;
-  /** `83.33` means 83.33%. Null when nothing was allocated — never `0`. */
-  percent_consumed: string | null;
-  /** A word for the line's state, e.g. `"unused"`. Rendered, never parsed. */
+  /**
+   * Fraction of the allocation consumed — `1.5` means 150%, not 150.
+   *
+   * **The one field in this file that is a JSON `number` rather than a decimal
+   * string, and deliberately so: a ratio is not money.** It is derived from two
+   * amounts but is not itself an amount, so it carries no rounding obligation
+   * and nothing downstream should treat it as currency.
+   *
+   * Null **iff** nothing was allocated, and the null is the point: against a
+   * zero allocation both `0` and `1` are lies, in opposite directions. Do not
+   * coerce it. `status` carries the reason — `unbudgeted` (spent against
+   * nothing) versus `unused` (mapped, untouched) — which a null alone cannot
+   * distinguish.
+   */
+  consumed_ratio: number | null;
+  /** `within` | `over` | `unbudgeted` | `unused`. */
   status: string;
-  /** Which way this envelope's spending is moving. */
+  /**
+   * `up` | `down` | `flat` | `insufficient_data`, read over a trailing window
+   * rather than this month alone.
+   *
+   * The fourth value is **abstention, not a magnitude**. `flat` means the slope
+   * was measured and came out small; `insufficient_data` means it was never
+   * measured. Collapsing them turns "we did not look" into "we looked and all
+   * was well", which is the unfalsifiable claim this phase is trying to avoid.
+   */
   direction: string;
   /** How that verdict was reached, including when it abstained. */
   direction_reason: string;
+  /** The two counts that make an abstention checkable rather than merely asserted. */
+  periods_observed: number;
+  periods_required: number;
   overspent: boolean;
   over_budget: boolean;
 };
@@ -346,7 +376,31 @@ export type MonthEndReport = {
    * 12th, it is a month nobody has synced since.
    */
   data_through: string | null;
+  /**
+   * The last day this report actually speaks for — `to` for a finished month,
+   * today for one still running. Distinct from `data_through`, which is where
+   * the *data* stops; this is where the *report* stops.
+   */
+  through: string | null;
+  /** True only for a month that has both ended and been fully recorded. */
+  complete: boolean;
+  /**
+   * How much of the month has elapsed. Two integers rather than a fraction,
+   * so "so far this month" is a statement the reader can check rather than a
+   * proportion computed somewhere they cannot see.
+   */
+  days_elapsed: number;
+  days_in_month: number;
   transactions: number;
+  /**
+   * The month's transactions split by whether they reached an envelope.
+   *
+   * Counts, not amounts, and the pair matters more than either alone: with
+   * auto-apply off `uncategorized_count` is routinely most of the month, which
+   * is what makes a tidy-looking per-envelope table misleading.
+   */
+  categorized_count: number;
+  uncategorized_count: number;
   currency: string;
   envelopes: MonthEndEnvelope[];
   opening_total: string;
@@ -434,3 +488,49 @@ export type BookkeeperClient = {
     allocated_on?: string;
   }) => Promise<SidecarResult<AllocationConfirmation>>;
 };
+
+// ---------------------------------------------------------------------------
+// Conformance to the generated schema
+// ---------------------------------------------------------------------------
+
+/**
+ * The port types above are hand-written, and hand-written copies of a
+ * financial API drift. Twice in Phase 5 this one did, silently: the sidecar
+ * renamed `percent_consumed` to `consumed_ratio` and changed it from a decimal
+ * string to a JSON number, and separately added six fields the port never
+ * carried. Both compiled. Both would have rendered a wrong report — every
+ * envelope reading as unbudgeted in the first case, two views with no data
+ * path in the second.
+ *
+ * The checks below turn that class of drift into a build failure naming the
+ * field. They compare against `lib/sidecar/types.ts`, which is **generated**
+ * from the sidecar's OpenAPI schema, so the generated file is the authority
+ * and the port is what must conform.
+ *
+ * The assertion is deliberately on *keys* rather than full structural
+ * assignability. What has actually bitten is the wire growing or renaming a
+ * field the port does not carry; a key check catches exactly that and does not
+ * produce false failures over the optionality differences that OpenAPI
+ * generation introduces (`consumed_ratio?: number | null` on the wire against a
+ * required `number | null` here, which `normalize.ts` guarantees).
+ *
+ * Type-only imports, erased at compile time — `contract.ts` carries no
+ * `server-only`, so this adds nothing to any bundle.
+ */
+type Assert<T extends true> = T;
+
+/** True when the wire type has no key the port is missing. */
+type PortCovers<Wire, Port, Renamed extends string = never> =
+  Exclude<keyof Wire, keyof Port | Renamed> extends never ? true : false;
+
+/**
+ * `from_date`/`to_date` are the two deliberate renames — the query params are
+ * `from`/`to` and the response suffixes them, because `from` is a Python
+ * keyword the sidecar can alias going in and not coming out. They are excused
+ * here by name so that every *other* rename still fails the build.
+ */
+export type ContractAssertions = [
+  Assert<PortCovers<WireMonthEnd, MonthEndReport, "from_date" | "to_date">>,
+  Assert<PortCovers<WireMonthEndEnvelope, MonthEndEnvelope>>,
+  Assert<PortCovers<WireCurrencyTotal, CurrencyTotal>>,
+];

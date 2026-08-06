@@ -545,11 +545,19 @@ export interface components {
          * BudgetLineModel
          * @description One envelope's allocation against its actual spending over a window.
          *
-         *     `percent_consumed` is nullable and that is load-bearing, not laziness: an
-         *     allocation of zero has no percentage, and both plausible substitutes are
-         *     wrong in opposite directions (0 reads as untouched, 100 as exhausted).
-         *     `null` is the only value a client cannot misread, and TypeScript will
-         *     make it handle the case.
+         *     `consumed_ratio` is nullable and that is load-bearing, not laziness: an
+         *     allocation of zero has no ratio, and both plausible substitutes are wrong
+         *     in opposite directions (0 reads as untouched, 1 as exhausted). `null` is
+         *     the only value a client cannot misread, and TypeScript will make it
+         *     handle the case.
+         *
+         *     The type asymmetry on the next three fields is deliberate. A ratio is not
+         *     money, so `consumed_ratio` is a genuine JSON number; `overspend` is money
+         *     and therefore a `Decimal` rendered as a string. `overspent` is a
+         *     server-computed boolean so the UI reads a flag rather than deriving one
+         *     by parsing a string -- a browser cannot do `Decimal` arithmetic and must
+         *     not try. This mirrors `EnvelopeBalanceModel`, which carries the same pair
+         *     for the same reason after the Phase 3 `available` fix.
          */
         BudgetLineModel: {
             /** Name */
@@ -560,10 +568,12 @@ export interface components {
             spent: string;
             /** Remaining */
             remaining: string;
-            /** Percent Consumed */
-            percent_consumed?: string | null;
+            /** Consumed Ratio */
+            consumed_ratio?: number | null;
             /** Status */
             status: string;
+            /** Overspent */
+            overspent: boolean;
             /** Overspend */
             overspend: string;
             /** Carried In */
@@ -838,8 +848,13 @@ export interface components {
          *     statistic is derived from money and must not be finished in a float in
          *     the browser.
          *
-         *     `direction` includes `undetermined`, which is abstention and is *not*
-         *     `flat`. `reason` says which rule produced the verdict either way.
+         *     `direction` is one of `up`, `down`, `flat`, `insufficient_data`. The
+         *     fourth is abstention and is *not* `flat`: `flat` means the slope was
+         *     measured and is small, which is a finding a user acts on differently
+         *     from "we don't know yet". It is a fourth enum value rather than a null
+         *     `direction` so a client is never asked to infer abstention from an
+         *     absence. `reason`, `periods_observed` and `periods_required` make the
+         *     verdict interrogable either way.
          */
         EnvelopeTrendModel: {
             /** Name */
@@ -848,6 +863,8 @@ export interface components {
             direction: string;
             /** Periods Observed */
             periods_observed: number;
+            /** Periods Required */
+            periods_required: number;
             /** Total */
             total: string;
             /** Mean */
@@ -908,14 +925,24 @@ export interface components {
             remaining: string;
             /** Overspend */
             overspend: string;
-            /** Percent Consumed */
-            percent_consumed?: string | null;
+            /** Consumed Ratio */
+            consumed_ratio?: number | null;
             /** Status */
             status: string;
             /** Direction */
             direction: string;
             /** Direction Reason */
             direction_reason: string;
+            /**
+             * Periods Observed
+             * @default 0
+             */
+            periods_observed: number;
+            /**
+             * Periods Required
+             * @default 0
+             */
+            periods_required: number;
             /** Overspent */
             overspent: boolean;
             /** Over Budget */
@@ -981,8 +1008,20 @@ export interface components {
             coverage: string;
             /** Data Through */
             data_through?: string | null;
+            /** Through */
+            through?: string | null;
+            /** Complete */
+            complete: boolean;
+            /** Days Elapsed */
+            days_elapsed: number;
+            /** Days In Month */
+            days_in_month: number;
             /** Transactions */
             transactions: number;
+            /** Categorized Count */
+            categorized_count: number;
+            /** Uncategorized Count */
+            uncategorized_count: number;
             /** Currency */
             currency: string;
             /** Envelopes */

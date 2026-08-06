@@ -15,17 +15,18 @@
  * reader who trusts the picture over the footnote. So the axis stretches past
  * the allocation and the bar crosses it, in a different colour.
  *
- * **A zero allocation has no percentage.** The sidecar sends
- * `percent_consumed: null` and `status: "unbudgeted"` for it, with the reason
- * spelled out in `budget.py`: 0 reads as untouched and 100 as exhausted, and a
+ * **A zero allocation has no ratio.** The sidecar sends
+ * `consumed_ratio: null` and `status: "unbudgeted"` for it, with the reason
+ * spelled out in `budget.py`: 0 reads as untouched and 1 as exhausted, and a
  * zero budget supports neither claim. Those rows get no bar at all — a
  * proportion needs a denominator, and inventing one is the lie.
  *
- * `percent_consumed` arrives as a **string**, because it is a `Decimal`
- * derived from money. It is parsed here, once, to decide a bar width — the
- * render edge, where a float is only ever anti-aliasing. Nothing else in this
- * module touches money: `status`, `overspend` and `remaining` are the
- * sidecar's `Decimal` answers, read verbatim.
+ * **No money is touched here at all.** `consumed_ratio` is a genuine JSON
+ * number rather than a `Decimal` string, and that asymmetry is the sidecar's:
+ * a ratio is not money. The amounts beside it — `overspend`, `remaining`,
+ * `allocated`, `spent` — stay strings and are never parsed in this module, and
+ * `overspent` and `status` are read as flags rather than derived by comparing
+ * two decimal strings, which a browser cannot do correctly.
  */
 
 import type { BudgetLine, MonthEndEnvelope } from "./types";
@@ -60,8 +61,8 @@ export type BudgetRow = {
   name: string;
   line: BudgetLine;
   /**
-   * `"unallocated"` when the sidecar sent no percentage. These rows carry no
-   * bar: there is no denominator to draw one against.
+   * `"unallocated"` when the sidecar sent no ratio. These rows carry no bar:
+   * there is no denominator to draw one against.
    */
   kind: BudgetRowKind;
   /** The sanitised ratio, or null. `0.8333` means 83.33%. */
@@ -76,7 +77,11 @@ export type BudgetRow = {
   overFraction: number;
   /** True when the bar ran past the cap and is drawn open-ended. */
   clipped: boolean;
-  /** `status === "over"`. The sidecar's verdict, never a comparison made here. */
+  /**
+   * `status === "over"`: this window's spend exceeded this window's
+   * allocation. **Not** `line.overspent`, which is the different and
+   * independent failure of a negative running balance — see `budgetRow`.
+   */
   isOver: boolean;
   /** An allocation nothing was spent against — different from being under it. */
   isUnused: boolean;
@@ -131,10 +136,25 @@ export function budgetDomainMax(lines: BudgetLine[]): number {
 
 export function budgetRow(line: BudgetLine, domainMax: number): BudgetRow {
   const ratio = cleanRatio(line.consumed_ratio);
-  // Read from the sidecar's flag, never from comparing `ratio` to 1. It
-  // decided this in `Decimal` against the running balance; a row over by a
-  // cent must not round its way back into the clear here.
-  const isOver = line.overspent || line.status === "over";
+  /*
+   * `status`, and **not** `overspent`.
+   *
+   * These are two different failures and the sidecar keeps them apart:
+   * `status === "over"` means this window's spend exceeded this window's
+   * allocation, while `overspent` means the running balance went negative —
+   * money already gone, possibly from months ago. An envelope can be either
+   * without being the other.
+   *
+   * Collapsing them was a real bug here, caught against live data: Transport
+   * came back `overspent: true` with `status: "within"` at 24% of its
+   * allocation, and reading the flag painted a comfortably-under bar red and
+   * badged it "over by $13.00". That is the false alarm `api.py` warns about,
+   * and it would have been invisible in any fixture that set both together.
+   *
+   * The balance overspend is not dropped — it is `EnvelopeCard`'s to report,
+   * which the month-end card renders directly above this one.
+   */
+  const isOver = line.status === "over";
   const isUnused = line.status === "unused";
 
   if (ratio === null) {

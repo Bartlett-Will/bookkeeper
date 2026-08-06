@@ -18,8 +18,11 @@ import { toMonthEndReport } from "./normalize";
  * against a copy of the ledger. Not written from the schema — Phase 4's two
  * bugs both typechecked and both passed tests written from the schema, and
  * what caught them was reading a real body. Note `"0"` where a hand-written
- * fixture would say `"0.00"`, and `categorized_share: "0E+2"`, which is a
- * shape `Decimal` really does serialize to.
+ * fixture would say `"0.00"`. Re-captured after the sidecar renamed
+ * `percent_consumed` to `consumed_ratio` and changed its type from a decimal
+ * string to a JSON number — a rename that left the old normalizer reading a
+ * field that no longer existed, returning null for every envelope, and
+ * typechecking perfectly while doing it.
  */
 const LIVE_BODY = {
   allocated_total: "0",
@@ -27,15 +30,20 @@ const LIVE_BODY = {
   available: "137457.78",
   budgeted_cash: "137457.78",
   categorization: "none",
-  categorized_share: "0E+2",
+  categorized_count: 0,
+  categorized_share: "0.0000",
   closing_total: "0",
+  complete: true,
   coverage: "complete",
   currency: "USD",
   data_through: "2026-07-31",
+  days_elapsed: 31,
+  days_in_month: 31,
   envelopes: [
     {
       allocated: "0",
       closing_balance: "0",
+      consumed_ratio: null,
       direction: "flat",
       direction_reason: "no spending in any of the 3 periods",
       name: "Dining Out",
@@ -43,7 +51,8 @@ const LIVE_BODY = {
       over_budget: false,
       overspend: "0",
       overspent: false,
-      percent_consumed: null,
+      periods_observed: 3,
+      periods_required: 3,
       remaining: "0",
       spent: "0",
       status: "unused",
@@ -58,13 +67,23 @@ const LIVE_BODY = {
   outliers: [],
   spent_total: "0",
   summary: "…",
+  through: "2026-07-31",
   to_date: "2026-07-31",
   total_overspend: "0",
   total_spend: "17.00",
   transactions: 117,
   trend_from: "2026-05-02",
   trend_to: "2026-07-31",
-  unjudged: ["Dining Out"],
+  uncategorized_count: 114,
+  unjudged: [
+    "Dining Out",
+    "Groceries",
+    "Health",
+    "Rent",
+    "Subscriptions",
+    "Transport",
+    "Utilities",
+  ],
   unmapped_accounts: ["Expenses:Unknown"],
   unmapped_total: "17.00",
   warnings: ["budget: 17.00 USD of spending in this window is not mapped"],
@@ -86,14 +105,52 @@ describe("toMonthEndReport", () => {
     assert.equal(report.unmapped_total, "17.00");
     assert.equal(report.total_spend, "17.00");
     assert.equal(report.available, "137457.78");
-    // Untouched, including the exponent form. Anything that parsed this to
-    // normalise it would be doing float arithmetic on a financial record.
-    assert.equal(report.categorized_share, "0E+2");
+    // Carried verbatim. `Decimal` has serialized this field as both "0.0000"
+    // and "0E+2" across sidecar revisions, so anything comparing it to a
+    // literal zero string is wrong; parse it at the render edge or not at all.
+    assert.equal(report.categorized_share, "0.0000");
   });
 
-  it("keeps a null percent_consumed null rather than making it zero", () => {
+  it("keeps a null consumed_ratio null rather than making it zero", () => {
+    // Against a zero allocation both 0 and 1 are lies, in opposite directions.
     const report = toMonthEndReport(LIVE_BODY);
-    assert.equal(report.envelopes[0].percent_consumed, null);
+    assert.equal(report.envelopes[0].consumed_ratio, null);
+  });
+
+  it("reads consumed_ratio as the number it is, not as a string", () => {
+    // The regression for the rename. `consumed_ratio` is the one field in this
+    // payload that is a real JSON number — a ratio is not money — and reading
+    // it with a string reader yields null for every envelope, which renders as
+    // "nothing was budgeted" across the whole report.
+    const report = toMonthEndReport({
+      ...LIVE_BODY,
+      envelopes: [{ ...LIVE_BODY.envelopes[0], consumed_ratio: 1.5 }],
+    });
+    assert.equal(report.envelopes[0].consumed_ratio, 1.5);
+  });
+
+  it("carries the counts that make an abstention checkable", () => {
+    const report = toMonthEndReport(LIVE_BODY);
+    assert.equal(report.envelopes[0].periods_observed, 3);
+    assert.equal(report.envelopes[0].periods_required, 3);
+    assert.equal(report.uncategorized_count, 114);
+    assert.equal(report.categorized_count, 0);
+  });
+
+  it("carries the trend and outlier fields a chart needs", () => {
+    // These are the data path for two of the three Phase 5 views. An object
+    // literal is a whitelist, so a field omitted here is a view with nothing
+    // to render, and nothing downstream can tell that from an empty report.
+    const report = toMonthEndReport(LIVE_BODY);
+    assert.deepEqual(report.trend_from, "2026-05-02");
+    assert.deepEqual(report.trend_to, "2026-07-31");
+    assert.equal(report.unjudged.length, 7);
+    assert.deepEqual(report.outliers, []);
+    assert.equal(report.envelopes[0].direction, "flat");
+    assert.equal(report.envelopes[0].direction_reason.length > 0, true);
+    assert.equal(report.envelopes[0].status, "unused");
+    assert.equal(report.envelopes[0].remaining, "0");
+    assert.equal(report.envelopes[0].overspend, "0");
   });
 
   it("keeps overspent and over_budget as separate verdicts", () => {
@@ -105,6 +162,18 @@ describe("toMonthEndReport", () => {
     });
     assert.equal(report.envelopes[0].overspent, false);
     assert.equal(report.envelopes[0].over_budget, true);
+  });
+
+  it("defaults a missing direction to abstention, not to flat", () => {
+    // `flat` claims the slope was measured and came out small. A body that did
+    // not carry a direction supports no such claim, and a card reading an
+    // empty string could render it as a measured verdict.
+    const report = toMonthEndReport({
+      ...LIVE_BODY,
+      envelopes: [{ ...LIVE_BODY.envelopes[0], direction: undefined }],
+    });
+    assert.equal(report.envelopes[0].direction, "insufficient_data");
+    assert.ok(report.envelopes[0].direction_reason.length > 0);
   });
 
   it("defaults coverage and categorization to their cautious ends", () => {

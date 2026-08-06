@@ -16,7 +16,18 @@
  * still are.
  *
  * It drives the *real* tool definitions and the *real* system prompt, because
- * the tool descriptions are the thing under test. It binds them to a recording
+ * the tool descriptions are the thing under test.
+ *
+ * **Basis change, 2026-08-06 — earlier figures are not directly comparable.**
+ * Until now this script sent `regularPrompt` alone, while the route sends
+ * `systemPrompt({...})`, which appends `getDatePrompt` — so every number
+ * measured before this date, including Phase 4's 22/22 and 10/10 and the first
+ * seven-tool run's 25/25 and 14/15, was measured against a prompt the app never
+ * sends. That is not a small difference: without the date line `qwen3:8b` was
+ * observed answering "how did July go" with `2023-07`, the year from its
+ * training data. The harness now composes the prompt the way the route does,
+ * so the numbers describe what ships. Preserving the old basis would only have
+ * kept new figures comparable with wrong ones. It binds them to a recording
  * stub instead of the sidecar: selection happens before execution, so a stub
  * measures the same thing, and it guarantees `allocate_to_envelope` — the one
  * write tool — cannot touch the ledger during a benchmark.
@@ -25,10 +36,21 @@
  */
 
 import { generateText } from "ai";
-import { regularPrompt } from "@/lib/ai/prompts";
+import { systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel, withThinking } from "@/lib/ai/providers";
 import { bookkeeperTools } from "@/lib/ai/tools/bookkeeper";
 import type { BookkeeperClient } from "@/lib/ai/tools/bookkeeper/client";
+
+/**
+ * Exactly what `app/(chat)/api/chat/route.ts` passes as `instructions`.
+ *
+ * `includeArtifacts` is false because `ARTIFACT_TOOLS_ACTIVE` is false there;
+ * if that flag ever flips, this must follow it or the harness stops measuring
+ * production again. Composed once rather than per turn so every case in a run
+ * sees an identical prompt — `getDatePrompt` reads the clock, and a run
+ * spanning midnight would otherwise change its own basis half way through.
+ */
+const SYSTEM = systemPrompt({ includeArtifacts: false });
 
 /** `null` means "should answer in prose without calling anything". */
 type Expected = string | null;
@@ -263,14 +285,19 @@ function recordingClient(calls: string[]): BookkeeperClient {
         available: "0.00",
         budgeted_cash: "0.00",
         categorization: "none",
+        categorized_count: 0,
         categorized_share: "0",
         closing_total: "0.00",
+        complete: true,
         coverage: "complete",
         currency: "USD",
         data_through: null,
+        days_elapsed: 31,
+        days_in_month: 31,
         envelopes: ENVELOPE_NAMES.map((name) => ({
           allocated: "0.00",
           closing_balance: "0.00",
+          consumed_ratio: null,
           direction: "flat",
           direction_reason: "",
           name,
@@ -278,7 +305,8 @@ function recordingClient(calls: string[]): BookkeeperClient {
           over_budget: false,
           overspend: "0.00",
           overspent: false,
-          percent_consumed: null,
+          periods_observed: 3,
+          periods_required: 3,
           remaining: "0.00",
           spent: "0.00",
           status: "unused",
@@ -292,12 +320,14 @@ function recordingClient(calls: string[]): BookkeeperClient {
         outliers: [],
         spent_total: "0.00",
         summary: "",
+        through: `${month}-28`,
         to: `${month}-28`,
         total_overspend: "0.00",
         total_spend: "0.00",
         transactions: 0,
         trend_from: null,
         trend_to: null,
+        uncategorized_count: 0,
         unjudged: ENVELOPE_NAMES,
         unmapped_accounts: [],
         unmapped_total: "0.00",
@@ -369,7 +399,7 @@ async function choose(
       model,
       prompt,
       providerOptions: withThinking(false),
-      system: regularPrompt,
+      system: SYSTEM,
       tools,
     });
     return {
@@ -415,6 +445,10 @@ async function runHard(
 }
 
 async function main() {
+  // Printed because the prompt carries today's date, so a run is only
+  // reproducible against the day it was made.
+  console.log(`system prompt in use:\n${SYSTEM}\n`);
+
   const calls: string[] = [];
   const tools = bookkeeperTools(recordingClient(calls));
   const model = getLanguageModel("chat-model");

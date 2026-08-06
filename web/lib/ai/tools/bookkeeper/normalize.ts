@@ -80,6 +80,25 @@ function nullableStr(value: unknown): string | null {
 }
 
 /**
+ * A JSON number that is allowed to be null, kept as a number.
+ *
+ * Exists for exactly one field — `consumed_ratio` — and the distinction it
+ * draws is the whole reason it is separate from `decimal()`. Everything
+ * money-shaped in these payloads is a decimal *string* and must stay one; a
+ * ratio is not money, so the sidecar sends it as a real JSON number and it
+ * stays a number here.
+ *
+ * The null is preserved rather than defaulted, because it means "nothing was
+ * allocated" and both `0` and `1` misreport that in opposite directions. This
+ * function existing is what stopped `nullableStr` silently turning every ratio
+ * into `null` after the field was renamed from `percent_consumed` — a wrong
+ * reading that would have typechecked and shown every envelope as unbudgeted.
+ */
+function nullableNum(value: unknown): number | null {
+  return typeof value === "number" ? value : null;
+}
+
+/**
  * A FastAPI 422 body, rewritten as one sentence naming the offending fields.
  *
  * The sidecar sets `extra="forbid"` on its request models, so a field this
@@ -298,21 +317,34 @@ export function toMonthEndReport(
   const envelopes = objList(data.envelopes).map((envelope) => ({
     allocated: decimal(envelope.allocated),
     closing_balance: decimal(envelope.closing_balance),
-    direction: str(envelope.direction),
-    direction_reason: str(envelope.direction_reason),
-    name: str(envelope.name),
-    opening_balance: decimal(envelope.opening_balance),
     // Absent reads as false for both, and for once that is not the cautious
     // choice — it is the only honest one. These two drive a sentence the model
     // is told is true, and defaulting them to true would manufacture an alarm
     // out of a field we could not read.
+    // Null, not 0. Nothing allocated means the ratio is undefined, and a zero
+    // here would render as "0% used" — a plausible figure standing in for a
+    // line nobody has budgeted. `nullableNum`, not `nullableStr`: this is a
+    // JSON number, and reading it as a string yields null for every envelope.
+    consumed_ratio: nullableNum(envelope.consumed_ratio),
+    // Absent falls back to abstention, never to `flat`. `flat` asserts the
+    // slope was measured and came out small; `insufficient_data` says it was
+    // never measured. A field we could not read is the second one, and an
+    // empty string here would leave a card free to treat it as the first.
+    direction: str(envelope.direction, "insufficient_data"),
+    direction_reason: str(
+      envelope.direction_reason,
+      "the ledger service did not report a direction"
+    ),
+    name: str(envelope.name),
+    opening_balance: decimal(envelope.opening_balance),
     over_budget: bool(envelope.over_budget),
     overspend: decimal(envelope.overspend),
     overspent: bool(envelope.overspent),
-    // Null, not "0". Nothing allocated means the percentage is undefined, and
-    // a zero here would render as "0% used" — a plausible figure standing in
-    // for a line nobody has budgeted.
-    percent_consumed: nullableStr(envelope.percent_consumed),
+    // Carried so an abstention is checkable: `insufficient_data` with 2 of 3
+    // periods observed is a statement a reader can verify, where the bare word
+    // is one they have to take on trust.
+    periods_observed: num(envelope.periods_observed),
+    periods_required: num(envelope.periods_required),
     remaining: decimal(envelope.remaining),
     spent: decimal(envelope.spent),
     status: str(envelope.status),
@@ -343,11 +375,17 @@ export function toMonthEndReport(
     available: decimal(data.available),
     budgeted_cash: decimal(data.budgeted_cash),
     categorization: str(data.categorization, "none"),
+    categorized_count: num(data.categorized_count),
     categorized_share: decimal(data.categorized_share),
     closing_total: decimal(data.closing_total),
+    // Absent reads as "not complete", the cautious end: an unreadable body
+    // must not license calling a month finished.
+    complete: bool(data.complete),
     coverage: str(data.coverage, "no-data"),
     currency: str(data.currency, "USD"),
     data_through: nullableStr(data.data_through),
+    days_elapsed: num(data.days_elapsed),
+    days_in_month: num(data.days_in_month),
     envelopes,
     errors: strList(data.errors),
     from: str(data.from_date),
@@ -358,12 +396,14 @@ export function toMonthEndReport(
     outliers,
     spent_total: decimal(data.spent_total),
     summary: str(data.summary),
+    through: nullableStr(data.through),
     to: str(data.to_date),
     total_overspend: decimal(data.total_overspend),
     total_spend: decimal(data.total_spend),
     transactions: num(data.transactions),
     trend_from: nullableStr(data.trend_from),
     trend_to: nullableStr(data.trend_to),
+    uncategorized_count: num(data.uncategorized_count),
     unjudged,
     unmapped_accounts: strList(data.unmapped_accounts),
     unmapped_total: decimal(data.unmapped_total),

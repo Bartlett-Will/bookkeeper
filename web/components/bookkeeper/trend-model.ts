@@ -2,9 +2,9 @@
  * Presentation logic for trends and outliers. Pure, so the distinction that
  * matters most here can be tested rather than eyeballed.
  *
- * **Abstention is not a direction.** The sidecar answers `undetermined` when
- * it cannot judge an envelope, and `api.py` says so in as many words:
- * "`undetermined` is an abstention and is not `flat`". "We do not have the
+ * **Abstention is not a direction.** The sidecar answers `insufficient_data`
+ * when it cannot judge an envelope, and `api.py` says so in as many words:
+ * it "is *not* `flat`: `flat` means the slope was measured and is small". "We do not have the
  * history to judge this" and "spending is steady" are different claims, and a
  * reader acts on them differently. The temptation is to let abstention fall
  * through the same rendering path as a zero slope, which produces a chart
@@ -63,7 +63,7 @@ export type DirectionPresentation = {
  * `EnvelopeTrend` with the statistics behind it, while the month-end report
  * sends only `direction` and `direction_reason` on each envelope. Reading the
  * enum in one place is what stops the month-end card growing its own, subtly
- * more forgiving, interpretation of `undetermined`.
+ * more forgiving, interpretation of `insufficient_data`.
  *
  * Rising spend is not "bad" and falling spend is not "good". Groceries up 4%
  * in a month with a house guest is nothing; a subscriptions envelope up 4% is
@@ -73,18 +73,18 @@ export type DirectionPresentation = {
  */
 export function describeDirection(direction: string): DirectionPresentation {
   switch (direction) {
-    case "rising":
+    case "up":
       return {
         abstained: false,
         glyph: "up",
-        label: "spending rising",
+        label: "spending up",
         showsFigures: true,
       };
-    case "falling":
+    case "down":
       return {
         abstained: false,
         glyph: "down",
-        label: "spending falling",
+        label: "spending down",
         showsFigures: true,
       };
     case "flat":
@@ -95,7 +95,7 @@ export function describeDirection(direction: string): DirectionPresentation {
         showsFigures: true,
       };
     default:
-      // `undetermined`, and anything unrecognised. An unknown direction is
+      // `insufficient_data`, and anything unrecognised. An unknown direction is
       // treated as an abstention rather than guessed at — the cautious end,
       // and the only one that cannot manufacture a verdict.
       return {
@@ -164,14 +164,14 @@ export function formatRelativeSlope(relative: string | null): string | null {
  *
  * The sidecar's `reason` is preferred because it knows which rule it applied
  * and what threshold it applied it at. The fallback names the count, so a
- * reader still learns how far short the history fell — whether waiting another
- * month fixes it.
+ * reader still learns how far short the history fell — "1 of 3" says whether
+ * waiting another month fixes it.
  */
 export function abstentionReason(trend: EnvelopeTrend): string {
   if (trend.reason.trim().length > 0) {
     return trend.reason;
   }
-  return `Only ${trend.periods_observed} period(s) of spending.`;
+  return `${trend.periods_observed} of ${trend.periods_required} periods have spending.`;
 }
 
 /**

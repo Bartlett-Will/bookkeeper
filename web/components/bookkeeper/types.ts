@@ -23,6 +23,7 @@
 
 import type {
   EnvelopeReport as PortEnvelopeReport,
+  MonthEndReport as PortMonthEndReport,
   ReviewQueue as PortReviewQueue,
   SpendingReport as PortSpendingReport,
 } from "@/lib/ai/tools/bookkeeper/client";
@@ -392,7 +393,16 @@ export type MonthEndReportData = {
    * month nobody has synced since.
    */
   data_through: string | null;
+  /** The last day this report covers, which for a running month is today. */
+  through: string | null;
+  /** True once the month is over. Redundant with `coverage`, and cheaper to read. */
+  complete: boolean;
+  days_elapsed: number;
+  days_in_month: number;
   transactions: number;
+  /** How many of the month's transactions reached an envelope, and how many did not. */
+  categorized_count: number;
+  uncategorized_count: number;
   currency: string;
   envelopes: MonthEndEnvelope[];
   opening_total: string;
@@ -449,21 +459,21 @@ export type ContractAssertions = [
   Assert<Satisfies<PortReviewQueue, ReviewQueueData>>,
   Assert<Satisfies<PortEnvelopeReport, EnvelopeReportData>>,
   Assert<Satisfies<PortSpendingReport, SpendingReportData>>,
+  Assert<Satisfies<PortMonthEndReport, MonthEndReportData>>,
 ];
 
 /**
- * The Phase 5 shapes — `BudgetReportData`, `TrendsReportData`,
- * `MonthEndReportData` — have no rows above yet, and their absence is load-
- * bearing rather than an oversight. `client.ts` does not export port types for
- * `/reports/budget`, `/reports/trends` or `/reports/month-end` at the time of
- * writing, and that file belongs to another worker this phase. A row asserting
- * against a type that does not exist would not compile; one asserting against
- * `unknown` would pass unconditionally and be worse than nothing, since it
- * would look like coverage.
+ * `BudgetReportData` and `TrendsReportData` have no rows, and the absence is
+ * load-bearing rather than an oversight.
  *
- * So these three shapes are currently *unchecked against the sidecar* — the
- * one thing the assertions above exist to prevent. Add their rows the moment
- * the port declares them; until then a rename on the Python side reaches these
- * components as `undefined` inside a render, exactly as the review queue and
- * spending report once did.
+ * `/reports/budget` and `/reports/trends` exist on the sidecar and are fully
+ * specified, but `BookkeeperClient` declares no method for either — the tool
+ * surface was capped at seven and neither got one, so no port type exists to
+ * assert against. A row pointing at `unknown` would pass unconditionally and
+ * be worse than nothing, because it would look like coverage.
+ *
+ * The practical consequence: `BudgetChart` and `TrendCard` are reachable today
+ * only through `MonthEndCard`, which feeds them from `MonthEndReport` — and
+ * that path is checked, by the row above plus `monthEndBudgetLines`. If either
+ * endpoint is later given a tool, add its row here at the same time.
  */

@@ -18,9 +18,10 @@ function trend(
   overrides: Partial<EnvelopeTrend> & { name: string }
 ): EnvelopeTrend {
   return {
-    direction: "rising",
+    direction: "up",
     mean: "100.00",
     periods_observed: 3,
+    periods_required: 3,
     points: [],
     reason: "",
     relative_slope: "0.12",
@@ -66,7 +67,7 @@ describe("describeTrend — abstention is not a direction", () => {
     // horizontal dash would be indistinguishable from `flat` at a glance,
     // which is the flattening this guards against.
     const abstained = describeTrend(
-      trend({ direction: "undetermined", name: "New" })
+      trend({ direction: "insufficient_data", name: "New" })
     );
     const flat = describeTrend(trend({ direction: "flat", name: "Steady" }));
 
@@ -81,7 +82,7 @@ describe("describeTrend — abstention is not a direction", () => {
     // reader who sees it, and the sidecar stood behind nothing.
     const abstained = describeTrend(
       trend({
-        direction: "undetermined",
+        direction: "insufficient_data",
         name: "New",
         relative_slope: null,
         slope: "0.00",
@@ -112,11 +113,11 @@ describe("describeTrend — abstention is not a direction", () => {
 describe("partitionTrends", () => {
   it("separates unjudged envelopes into their own group", () => {
     const { judged, abstained } = partitionTrends([
-      trend({ direction: "rising", name: "a" }),
-      trend({ direction: "undetermined", name: "b" }),
+      trend({ direction: "up", name: "a" }),
+      trend({ direction: "insufficient_data", name: "b" }),
       trend({ direction: "flat", name: "c" }),
-      trend({ direction: "falling", name: "d" }),
-      trend({ direction: "undetermined", name: "e" }),
+      trend({ direction: "down", name: "d" }),
+      trend({ direction: "insufficient_data", name: "e" }),
     ]);
 
     assert.deepEqual(
@@ -135,7 +136,7 @@ describe("abstentionReason", () => {
     assert.equal(
       abstentionReason(
         trend({
-          direction: "undetermined",
+          direction: "insufficient_data",
           name: "a",
           reason: "Needs 3 periods; 1 has spending.",
         })
@@ -148,13 +149,14 @@ describe("abstentionReason", () => {
     assert.match(
       abstentionReason(
         trend({
-          direction: "undetermined",
+          direction: "insufficient_data",
           name: "a",
           periods_observed: 1,
+          periods_required: 3,
           reason: "   ",
         })
       ),
-      /1 period/
+      /1 of 3/
     );
   });
 });
