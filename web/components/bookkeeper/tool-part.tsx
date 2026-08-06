@@ -21,26 +21,53 @@
  * check, where a cast would only be a promise.
  */
 
+import { BudgetChart } from "./budget-chart";
 import { EnvelopeCard } from "./envelope-card";
+import { MonthEndCard } from "./month-end-card";
 import { ReportChart } from "./report-chart";
 import { ReviewCard } from "./review-card";
+import { TrendCard } from "./trend-card";
 import type {
+  BudgetReportData,
   EnvelopeReportData,
+  MonthEndReportData,
   ReviewQueueData,
   SpendingReportData,
+  TrendsReportData,
 } from "./types";
 
-/** The tool names of PLAN.md §5.3 whose results this file renders. */
+/**
+ * The tool names of PLAN.md §5.3 whose results this file renders.
+ *
+ * Phase 5 adds exactly one: `get_month_end_report`. Budget-vs-actual and
+ * trend data ride inside existing responses rather than arriving as tools of
+ * their own — the tool surface was *measured* at six, and every tool added is
+ * surface that measurement no longer covers.
+ */
 const RENDERED_TOOLS = new Set([
   "tool-get_review_queue",
   "tool-get_envelope_status",
   "tool-get_spending_report",
+  "tool-get_month_end_report",
 ]);
 
 /** `kind` discriminants set by `lib/ai/tools/bookkeeper/result.ts`. */
-type ResultKind = "review" | "envelopes" | "spending";
+type ResultKind =
+  | "review"
+  | "envelopes"
+  | "spending"
+  | "budget"
+  | "trends"
+  | "month-end";
 
-const RENDERED_KINDS = new Set<string>(["review", "envelopes", "spending"]);
+const RENDERED_KINDS = new Set<string>([
+  "review",
+  "envelopes",
+  "spending",
+  "budget",
+  "trends",
+  "month-end",
+]);
 
 type ToolPartLike = {
   type: string;
@@ -128,6 +155,12 @@ export function BookkeeperToolPart({ part }: { part: { type: string } }) {
       return <EnvelopeCard report={data as unknown as EnvelopeReportData} />;
     case "spending":
       return <ReportChart report={data as unknown as SpendingReportData} />;
+    case "budget":
+      return <BudgetChart report={data as unknown as BudgetReportData} />;
+    case "trends":
+      return <TrendCard report={data as unknown as TrendsReportData} />;
+    case "month-end":
+      return <MonthEndCard report={data as unknown as MonthEndReportData} />;
     default:
       return null;
   }
@@ -135,6 +168,7 @@ export function BookkeeperToolPart({ part }: { part: { type: string } }) {
 
 const TOOL_LABELS: Record<string, string> = {
   "tool-get_envelope_status": "envelope balances",
+  "tool-get_month_end_report": "month-end report",
   "tool-get_review_queue": "review queue",
   "tool-get_spending_report": "spending report",
 };

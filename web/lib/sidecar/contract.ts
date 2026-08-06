@@ -154,6 +154,34 @@ export type SpendingReportResponse = Schemas["SpendingReportResponse"];
 export type EnvelopeSeries = Schemas["EnvelopeSeriesModel"];
 export type SpendPoint = Schemas["SpendPointModel"];
 
+/**
+ * What the matches of a transaction search add up to, per currency.
+ *
+ * Note the name: `total` on `TransactionSearchResponse` is a **count** and
+ * `amount_totals` is the money. The sidecar named them apart deliberately —
+ * `total` and `totals` one keystroke apart in generated TypeScript is a bug
+ * waiting to be written — and that is worth preserving on this side too.
+ */
+export type CurrencyTotal = Schemas["CurrencyTotalModel"];
+
+export type BudgetReportResponse = Schemas["BudgetReportResponse"];
+export type BudgetLine = Schemas["BudgetLineModel"];
+
+export type TrendsReportResponse = Schemas["TrendsReportResponse"];
+export type EnvelopeTrend = Schemas["EnvelopeTrendModel"];
+export type Outlier = Schemas["OutlierModel"];
+/**
+ * Why an envelope was or was not judged for outliers.
+ *
+ * Returned for *every* envelope, judged or not, which is the point: it keeps
+ * "nothing unusual was found" distinguishable from "there was not enough data
+ * to look", and those are a finding and the absence of one.
+ */
+export type OutlierAssessment = Schemas["OutlierAssessmentModel"];
+
+export type MonthEndReportResponse = Schemas["MonthEndReportResponse"];
+export type MonthEndEnvelope = Schemas["MonthEndEnvelopeModel"];
+
 export type CategorizeResponse = Schemas["CategorizeResponse"];
 export type CategorizeResult = Schemas["CategorizeResultModel"];
 
@@ -206,6 +234,22 @@ export type SidecarPort = {
     params?: { from?: string | null; to?: string | null },
     options?: CallOptions
   ) => Promise<SidecarResult<SpendingReportResponse>>;
+  /**
+   * `month` is `YYYY-MM`. Omitting it selects the sidecar's default — the
+   * month of the ledger's last transaction, not the wall-clock month.
+   */
+  getMonthEndReport: (
+    params?: { month?: string | null },
+    options?: CallOptions
+  ) => Promise<SidecarResult<MonthEndReportResponse>>;
+  getBudgetReport: (
+    params?: { from?: string | null; to?: string | null },
+    options?: CallOptions
+  ) => Promise<SidecarResult<BudgetReportResponse>>;
+  getTrendsReport: (
+    params?: { from?: string | null; to?: string | null },
+    options?: CallOptions
+  ) => Promise<SidecarResult<TrendsReportResponse>>;
   startSync: (
     body: SyncStartRequest,
     options?: CallOptions

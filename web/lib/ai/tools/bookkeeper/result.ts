@@ -79,9 +79,32 @@ export function failed<Kind extends string, Data>(
  * qualitative facts it may repeat, or to drop the prose reply entirely and let
  * the card speak. Do not solve it by adding more prohibitions to this string —
  * the fabrication above is what that approach produced.
+ *
+ * **`sayableFacts` is the first of those two options, taken (Phase 5).**
+ *
+ * The diagnosis above generalises past numbers: the model asserts things
+ * because it has been given a subject and nothing true to say about it, and
+ * silence is not an answer an instruction-tuned model reaches for. Withholding
+ * produced invented figures; withholding the *judgement* produces invented
+ * judgements. So the fix is the same shape as the one that worked — supply, not
+ * prohibition. A tool may pass a function deriving a few short sentences from
+ * its own payload, and they are handed over as the facts the model *has*.
+ *
+ * The constraint that makes them safe is where they come from: each sentence
+ * must be readable off a boolean, an enum, or a count the **sidecar** already
+ * computed in `Decimal`. Nothing here may compare, sum, or threshold an amount
+ * to produce one — that would move a financial judgement into the tool layer
+ * and reintroduce the arithmetic this whole file exists to prevent. If a fact
+ * needs a threshold, the threshold belongs in the sidecar and the fact arrives
+ * as a field.
+ *
+ * This narrows the residue; it does not close it. A model given three true
+ * sentences can still add a fourth. What it does is remove the *reason* it was
+ * reaching — and that is the mechanism that measured 6/6 the first time.
  */
 export function renderedByTheUi<Kind extends string, Data>(
-  successText: string
+  successText: string,
+  sayableFacts?: (data: Data) => readonly string[]
 ): (options: { output: BookkeeperToolResult<Kind, Data> }) => ToolResultOutput {
   return ({ output }) => {
     if (output.status === "error") {
@@ -90,9 +113,14 @@ export function renderedByTheUi<Kind extends string, Data>(
         value: `The ledger service could not answer: ${output.message} Tell the user this plainly and do not guess at the data.`,
       };
     }
+    const facts = sayableFacts?.(output.data) ?? [];
+    const granted =
+      facts.length === 0
+        ? ""
+        : ` These are the only facts about it you have, and each one is true: ${facts.join(" ")} Anything more specific than these you do not know.`;
     return {
       type: "text",
-      value: `${successText} The user can see it on screen. You were NOT shown the figures and do not know them, so any amount, balance, date, or account name you write would be invented. State none. Reply with at most one short sentence containing no numbers, or say nothing at all.`,
+      value: `${successText} The user can see it on screen. You were NOT shown the figures and do not know them, so any amount, balance, date, or account name you write would be invented. State none.${granted} Reply with at most one short sentence containing no numbers, or say nothing at all.`,
     };
   };
 }

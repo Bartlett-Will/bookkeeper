@@ -20,11 +20,13 @@ type requestSuggestionsTool = InferUITool<
 >;
 
 /**
- * The six tools of PLAN.md §5.3, inferred as a set rather than one by one.
+ * The bookkeeper tools, inferred as a set rather than one by one.
  *
- * Mapping over `bookkeeperTools`'s return type means adding a seventh tool
- * cannot leave the UI without types for its parts — the map is derived from
- * the registration, not maintained alongside it. `message.tsx` switches on
+ * Mapping over `bookkeeperTools`'s return type means adding a tool cannot
+ * leave the UI without types for its parts — the map is derived from the
+ * registration, not maintained alongside it. Phase 5 added a seventh,
+ * `get_month_end_report`, and this file needed no edit to carry it, which is
+ * the property the map was written for. `message.tsx` switches on
  * `tool-<name>` and reads `part.output`, which is the
  * `BookkeeperToolResult<Kind, Data>` discriminated union.
  */

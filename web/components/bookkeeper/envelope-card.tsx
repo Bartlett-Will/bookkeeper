@@ -18,6 +18,7 @@
  * browser.
  */
 
+import { chromeFor, type ReportVariant } from "./card-chrome";
 import { formatAmount, formatDate, pluralize } from "./format";
 import type { EnvelopeBalance, EnvelopeReportData } from "./types";
 
@@ -48,14 +49,20 @@ function meterFraction(envelope: EnvelopeBalance): number {
   return Math.min(1, Math.max(0, spent / allocated));
 }
 
-export function EnvelopeCard({ report }: { report: EnvelopeReportData }) {
+export function EnvelopeCard({
+  report,
+  variant = "card",
+}: {
+  report: EnvelopeReportData;
+  variant?: ReportVariant;
+}) {
   const hasOverspend = isPositive(report.total_overspend);
   const overspentCount = report.envelopes.filter(
     (envelope) => envelope.overspent
   ).length;
 
   return (
-    <section className="w-full rounded-xl border border-border/60 bg-card p-4 shadow-[var(--shadow-card)]">
+    <section className={chromeFor(variant)}>
       <header className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <div>
           <h3 className="font-medium text-[13px] text-foreground">Envelopes</h3>

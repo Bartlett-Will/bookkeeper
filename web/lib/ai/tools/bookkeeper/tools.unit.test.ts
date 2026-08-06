@@ -4,6 +4,7 @@ import type {
   AllocationConfirmation,
   BookkeeperClient,
   EnvelopeReport,
+  MonthEndReport,
   SidecarResult,
 } from "./client";
 import { BOOKKEEPER_TOOL_NAMES, bookkeeperTools } from "./index";
@@ -40,6 +41,63 @@ const envelopes: EnvelopeReport = {
   total_overspend: "0",
 };
 
+/**
+ * Copied from a live `GET /reports/month-end` against a fixture ledger, not
+ * written from the schema. Phase 4 lost two bugs to fixtures that typechecked
+ * and did not match a real body; this one has the field names and the shapes
+ * the sidecar actually sends, including `"0"` rather than `"0.00"` for an
+ * untouched envelope and a `percent_consumed` of null where nothing was
+ * allocated.
+ */
+const monthEnd: MonthEndReport = {
+  allocated_total: "0",
+  asof: "2026-07-31",
+  available: "137457.78",
+  budgeted_cash: "137457.78",
+  categorization: "none",
+  categorized_share: "0E+2",
+  closing_total: "0",
+  coverage: "complete",
+  currency: "USD",
+  data_through: "2026-07-31",
+  envelopes: [
+    {
+      allocated: "0",
+      closing_balance: "0",
+      direction: "flat",
+      direction_reason: "no spending in any of the 3 periods",
+      name: "Dining Out",
+      opening_balance: "0",
+      over_budget: false,
+      overspend: "0",
+      overspent: false,
+      percent_consumed: null,
+      remaining: "0",
+      spent: "0",
+      status: "unused",
+    },
+  ],
+  errors: [],
+  from: "2026-07-01",
+  label: "July 2026",
+  month: "2026-07",
+  ok: true,
+  opening_total: "0",
+  outliers: [],
+  spent_total: "0",
+  summary: "…",
+  to: "2026-07-31",
+  total_overspend: "0",
+  total_spend: "17.00",
+  transactions: 117,
+  trend_from: "2026-05-02",
+  trend_to: "2026-07-31",
+  unjudged: ["Dining Out"],
+  unmapped_accounts: ["Expenses:Unknown"],
+  unmapped_total: "17.00",
+  warnings: [],
+};
+
 const allocationAccepted: AllocationConfirmation = {
   allocated_on: "2026-07-30",
   amount: "250.00",
@@ -56,19 +114,33 @@ const allocationAccepted: AllocationConfirmation = {
   warnings: [],
 };
 
-type Calls = { allocate: unknown[]; search: unknown[]; spending: unknown[] };
+type Calls = {
+  allocate: unknown[];
+  search: unknown[];
+  spending: unknown[];
+  monthEnd: unknown[];
+};
 
 function fakeClient(overrides: Partial<BookkeeperClient> = {}): {
   client: BookkeeperClient;
   calls: Calls;
 } {
-  const calls: Calls = { allocate: [], search: [], spending: [] };
+  const calls: Calls = {
+    allocate: [],
+    monthEnd: [],
+    search: [],
+    spending: [],
+  };
   const client: BookkeeperClient = {
     allocateToEnvelope: (input) => {
       calls.allocate.push(input);
       return Promise.resolve({ data: allocationAccepted, ok: true });
     },
     getEnvelopes: () => Promise.resolve({ data: envelopes, ok: true }),
+    getMonthEndReport: (input) => {
+      calls.monthEnd.push(input);
+      return Promise.resolve({ data: monthEnd, ok: true });
+    },
     getReviewQueue: () =>
       Promise.resolve({
         data: {
@@ -105,9 +177,11 @@ function fakeClient(overrides: Partial<BookkeeperClient> = {}): {
       calls.search.push(input);
       return Promise.resolve({
         data: {
+          amount_totals: [],
           errors: [],
           limit: 20,
           matches: [],
+          mixed_currency: false,
           ok: true,
           query: input.q,
           shown: 0,
@@ -145,13 +219,13 @@ const run = (t: unknown, input: unknown): Promise<ToolOutput> =>
   );
 
 describe("the tool surface", () => {
-  it("is exactly the six of PLAN.md §5.3", () => {
+  it("is exactly the six of PLAN.md §5.3 plus Phase 5's month-end report", () => {
     const tools = bookkeeperTools(fakeClient().client);
     assert.deepEqual(
       Object.keys(tools).sort(),
       [...BOOKKEEPER_TOOL_NAMES].sort()
     );
-    assert.equal(Object.keys(tools).length, 6);
+    assert.equal(Object.keys(tools).length, 7);
   });
 
   it("has no tool that confirms a categorization", () => {
@@ -166,6 +240,7 @@ describe("every tool turns a dead sidecar into a value, not a throw", () => {
   const inputs: Record<string, unknown> = {
     allocate_to_envelope: { amount: 250, envelope: "Groceries" },
     get_envelope_status: {},
+    get_month_end_report: {},
     get_review_queue: {},
     get_spending_report: {},
     search_transactions: { query: "whole foods" },
@@ -177,6 +252,7 @@ describe("every tool turns a dead sidecar into a value, not a throw", () => {
       const tools = bookkeeperTools({
         allocateToEnvelope: down,
         getEnvelopes: down,
+        getMonthEndReport: down,
         getReviewQueue: down,
         getSpendingReport: down,
         searchTransactions: down,

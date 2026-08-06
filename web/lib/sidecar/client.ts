@@ -3,6 +3,7 @@ import "server-only";
 import type {
   AllocateRequest,
   AllocateResponse,
+  BudgetReportResponse,
   CallOptions,
   CategorizableAccountsResponse,
   CategorizeRequest,
@@ -11,6 +12,7 @@ import type {
   ConfirmResponse,
   EnvelopeReportResponse,
   HealthResponse,
+  MonthEndReportResponse,
   ReviewQueueResponse,
   SidecarFailure,
   SidecarPort,
@@ -20,6 +22,7 @@ import type {
   SyncStartResponse,
   SyncStatusResponse,
   TransactionSearchResponse,
+  TrendsReportResponse,
   VerifyResponse,
 } from "./contract";
 
@@ -315,6 +318,81 @@ export function getSpendingReport(
   );
 }
 
+/**
+ * Allocated versus actually spent, per envelope, over a window.
+ *
+ * Same `from`/`to` params and the same `from_date`/`to_date` response naming
+ * as `/reports/spending`, and the same defaulting: omitting both selects the
+ * ledger's own first and last transaction dates, not a wall-clock window.
+ *
+ * The two failure modes are deliberately different and callers should not
+ * flatten them. An unparseable date is a 422 — the request cannot be answered.
+ * A *backwards* window is a 200 carrying `ok: false` — the request was
+ * answered, and the answer is that it describes no window.
+ */
+export function getBudgetReport(
+  params: { from?: string | null; to?: string | null } = {},
+  options?: CallOptions
+): Promise<SidecarResult<BudgetReportResponse>> {
+  return call<BudgetReportResponse>(
+    {
+      path: "/reports/budget",
+      query: { from: params.from, to: params.to },
+      timeoutMs: READ_TIMEOUT_MS,
+    },
+    options
+  );
+}
+
+/**
+ * Direction per envelope plus the transactions judged unusual for theirs.
+ *
+ * Every threshold this applied is echoed in the response. That is not
+ * decoration: a trend verdict whose method cannot be checked is not a finding,
+ * and `assessments` reports each envelope it declined to judge along with why
+ * — which is what keeps "nothing unusual was found" distinguishable from
+ * "nothing was looked at".
+ */
+export function getTrendsReport(
+  params: { from?: string | null; to?: string | null } = {},
+  options?: CallOptions
+): Promise<SidecarResult<TrendsReportResponse>> {
+  return call<TrendsReportResponse>(
+    {
+      path: "/reports/trends",
+      query: { from: params.from, to: params.to },
+      timeoutMs: READ_TIMEOUT_MS,
+    },
+    options
+  );
+}
+
+/**
+ * The composite month-end report for one `YYYY-MM`.
+ *
+ * `month` is optional and omitting it is a real choice, not a missing
+ * argument: the sidecar then defaults to the month of the ledger's *last
+ * transaction* rather than the wall-clock month, so a report of a fixed ledger
+ * does not become an empty one because a day passed.
+ *
+ * An unparseable month is a 422 here rather than a 200 carrying `ok: false` —
+ * unlike a refused allocation there is no payload worth returning, because
+ * there is no month to report on.
+ */
+export function getMonthEndReport(
+  params: { month?: string | null } = {},
+  options?: CallOptions
+): Promise<SidecarResult<MonthEndReportResponse>> {
+  return call<MonthEndReportResponse>(
+    {
+      path: "/reports/month-end",
+      query: { month: params.month },
+      timeoutMs: READ_TIMEOUT_MS,
+    },
+    options
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Sync (background job)
 // ---------------------------------------------------------------------------
@@ -420,12 +498,15 @@ export const sidecar = {
   allocateToEnvelope,
   categorize,
   confirmReview,
+  getBudgetReport,
   getCategorizableAccounts,
   getEnvelopes,
   getHealth,
+  getMonthEndReport,
   getReviewQueue,
   getSpendingReport,
   getSyncStatus,
+  getTrendsReport,
   getVerify,
   searchTransactions,
   startSync,

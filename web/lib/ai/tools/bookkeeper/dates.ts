@@ -7,6 +7,7 @@
 // rather than turned into a 422 the model then has to interpret.
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_MONTH = /^\d{4}-\d{2}$/;
 
 /**
  * True only for a well-formed ISO date that names a real calendar day.
@@ -39,4 +40,22 @@ export function daysAgo(days: number, now: Date = new Date()): string {
   const then = new Date(now.getTime());
   then.setUTCDate(then.getUTCDate() - days);
   return toIsoDate(then);
+}
+
+/**
+ * True only for `YYYY-MM` naming a month that exists.
+ *
+ * Separate from `isIsoDate` rather than derived from it, because the failure it
+ * catches is different: `get_month_end_report` takes a *month*, and the mistake
+ * an 8B makes there is not an impossible day but an impossible month —
+ * `2026-13` for "the thirteenth month" and `2026-00` for "the month before
+ * January" are both things a model produces when it does the arithmetic itself.
+ * The regex alone accepts both.
+ */
+export function isIsoMonth(value: string): boolean {
+  if (!ISO_MONTH.test(value)) {
+    return false;
+  }
+  const month = Number(value.slice(5));
+  return month >= 1 && month <= 12;
 }

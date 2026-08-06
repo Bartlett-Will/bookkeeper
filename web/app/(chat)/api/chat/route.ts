@@ -341,8 +341,12 @@ export async function POST(request: Request) {
             ? { toolName: preRouted.toolName, type: "tool" }
             : "auto",
           tools: {
-            // The six tools of PLAN.md §5.3, bound to the sidecar for this
-            // request. Building them per-request rather than at module scope
+            // The six tools of PLAN.md §5.3 plus Phase 5's month-end report,
+            // bound to the sidecar for this request. The set comes from
+            // `bookkeeperTools`, so a tool is registered by being added there
+            // and nothing here needs editing.
+            //
+            // Building them per-request rather than at module scope
             // is what lets the client carry `request.signal`: an abandoned
             // chat turn then cancels its in-flight sidecar call instead of
             // leaving the ledger service working on a result nobody will read.

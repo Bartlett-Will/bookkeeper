@@ -13,6 +13,8 @@
 import type {
   AllocationCommit,
   AllocationConfirmation,
+  CurrencyTotal,
+  MonthEndReport,
   ReviewQueue,
   SpendingReport,
   SyncStarted,
@@ -212,6 +214,28 @@ export function toSpendingReport(
   };
 }
 
+/**
+ * `CurrencyTotalModel[]`, defended against being absent.
+ *
+ * An older sidecar has no `amount_totals` at all, and the safe reading of that
+ * is an empty list — "no total was computed" — which the card renders as no
+ * total. The dangerous alternative would be synthesising a zero, which is
+ * indistinguishable on screen from a real total of nothing.
+ */
+function toCurrencyTotals(value: unknown): CurrencyTotal[] {
+  return objList(value).map((total) => ({
+    accounts: strList(total.accounts),
+    currency: str(total.currency),
+    net: decimal(total.net),
+    receipt_count: num(total.receipt_count),
+    received: decimal(total.received),
+    spend_count: num(total.spend_count),
+    spent: decimal(total.spent),
+    transfer_count: num(total.transfer_count),
+    transferred: decimal(total.transferred),
+  }));
+}
+
 export function toTransactionSearch(
   body: unknown,
   requestedQuery: string
@@ -230,9 +254,14 @@ export function toTransactionSearch(
     simplefin_id: nullableStr(match.simplefin_id),
   }));
   return {
+    amount_totals: toCurrencyTotals(data.amount_totals),
     errors: strList(data.errors),
     limit: num(data.limit, matches.length),
     matches,
+    // Absent reads as "not mixed". The field only exists on a sidecar that
+    // computes `amount_totals`, and on one that does not there are no totals
+    // to be ambiguous about.
+    mixed_currency: bool(data.mixed_currency),
     ok: bool(data.ok, true),
     query: str(data.query, requestedQuery),
     // Computed: `TransactionSearchResponse` does not send `shown`.
@@ -240,6 +269,104 @@ export function toTransactionSearch(
     shown: matches.length,
     total: num(data.total, matches.length),
     truncated: bool(data.truncated),
+    warnings: strList(data.warnings),
+  };
+}
+
+/**
+ * `MonthEndReportResponse` → the port's `MonthEndReport`.
+ *
+ * Flat, like the other report endpoints, with the same `from_date`/`to_date`
+ * naming as `/reports/spending` — the query param is `month` but the day
+ * bounds come back suffixed, because `from` is a Python keyword and the
+ * sidecar can alias it going in and not coming out. That asymmetry has now cost
+ * one bug; reading it off a live body is what caught it then.
+ *
+ * The defaults matter more here than elsewhere, because this is the report a
+ * user reads as final. `coverage` falls back to `"no-data"` and
+ * `categorization` to `"none"`: both are the *cautious* end of their enum, and
+ * both are what the model is handed as fact by `sayableFacts`. A missing field
+ * defaulting to `"complete"` or `"full"` would turn a body we failed to
+ * understand into a confident statement that the month is finished and fully
+ * categorized, which is the one direction this must never fail in.
+ */
+export function toMonthEndReport(
+  body: unknown,
+  requestedMonth?: string
+): MonthEndReport {
+  const data = record(body);
+  const envelopes = objList(data.envelopes).map((envelope) => ({
+    allocated: decimal(envelope.allocated),
+    closing_balance: decimal(envelope.closing_balance),
+    direction: str(envelope.direction),
+    direction_reason: str(envelope.direction_reason),
+    name: str(envelope.name),
+    opening_balance: decimal(envelope.opening_balance),
+    // Absent reads as false for both, and for once that is not the cautious
+    // choice — it is the only honest one. These two drive a sentence the model
+    // is told is true, and defaulting them to true would manufacture an alarm
+    // out of a field we could not read.
+    over_budget: bool(envelope.over_budget),
+    overspend: decimal(envelope.overspend),
+    overspent: bool(envelope.overspent),
+    // Null, not "0". Nothing allocated means the percentage is undefined, and
+    // a zero here would render as "0% used" — a plausible figure standing in
+    // for a line nobody has budgeted.
+    percent_consumed: nullableStr(envelope.percent_consumed),
+    remaining: decimal(envelope.remaining),
+    spent: decimal(envelope.spent),
+    status: str(envelope.status),
+  }));
+  // An *absent* `unjudged` is not an empty one, and defaulting it to `[]` was
+  // a real bug here for a few minutes: empty means "every envelope was
+  // examined", which is precisely what licenses the model to say nothing looks
+  // unusual. A body without the field cannot support that claim, so absence
+  // fills in as "none of them were examined" — the reading that withholds the
+  // reassurance rather than manufacturing it.
+  const unjudged = Array.isArray(data.unjudged)
+    ? strList(data.unjudged)
+    : envelopes.map((envelope) => envelope.name);
+  const outliers = objList(data.outliers).map((outlier) => ({
+    amount: decimal(outlier.amount),
+    description: str(outlier.description),
+    envelope: str(outlier.envelope),
+    median: decimal(outlier.median),
+    posted_date: str(outlier.posted_date),
+    scale: decimal(outlier.scale),
+    scale_method: str(outlier.scale_method),
+    score: decimal(outlier.score),
+    threshold: decimal(outlier.threshold),
+  }));
+  return {
+    allocated_total: decimal(data.allocated_total),
+    asof: str(data.asof),
+    available: decimal(data.available),
+    budgeted_cash: decimal(data.budgeted_cash),
+    categorization: str(data.categorization, "none"),
+    categorized_share: decimal(data.categorized_share),
+    closing_total: decimal(data.closing_total),
+    coverage: str(data.coverage, "no-data"),
+    currency: str(data.currency, "USD"),
+    data_through: nullableStr(data.data_through),
+    envelopes,
+    errors: strList(data.errors),
+    from: str(data.from_date),
+    label: str(data.label),
+    month: str(data.month, requestedMonth ?? ""),
+    ok: bool(data.ok, true),
+    opening_total: decimal(data.opening_total),
+    outliers,
+    spent_total: decimal(data.spent_total),
+    summary: str(data.summary),
+    to: str(data.to_date),
+    total_overspend: decimal(data.total_overspend),
+    total_spend: decimal(data.total_spend),
+    transactions: num(data.transactions),
+    trend_from: nullableStr(data.trend_from),
+    trend_to: nullableStr(data.trend_to),
+    unjudged,
+    unmapped_accounts: strList(data.unmapped_accounts),
+    unmapped_total: decimal(data.unmapped_total),
     warnings: strList(data.warnings),
   };
 }

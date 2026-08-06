@@ -1,11 +1,19 @@
 /**
- * Measures tool-selection accuracy at the full six-tool surface.
+ * Measures tool-selection accuracy at the full tool surface — six in Phase 4,
+ * seven since Phase 5 added `get_month_end_report`.
  *
  * PLAN.md §5.3's amendment measured `qwen3:8b` picking correctly when given
  * **two** plausible tools, and concluded "the shallow single-step bet holds at
- * 8B". Phase 4 ships six, and §7's stated fallback if that degrades is to
+ * 8B". Phase 4 shipped six, and §7's stated fallback if that degrades is to
  * shrink the tool surface — so the number has to be measured rather than
  * assumed. This script is the measurement.
+ *
+ * **Re-run it whenever the surface changes.** §7's top risk is that an 8B
+ * degrades as the surface grows, and a tool being added is the moment that
+ * would show. Phase 5 added one and re-ran this rather than carrying the Phase
+ * 4 number forward; the new tool also sits *between* two existing ones, so the
+ * thing to watch is not only whether it is picked but whether its neighbours
+ * still are.
  *
  * It drives the *real* tool definitions and the *real* system prompt, because
  * the tool descriptions are the thing under test. It binds them to a recording
@@ -56,6 +64,14 @@ const CASES: ReadonlyArray<{ prompt: string; expected: Expected }> = [
   {
     expected: "get_spending_report",
     prompt: "chart what I spent by category over the past year",
+  },
+
+  // get_month_end_report (Phase 5)
+  { expected: "get_month_end_report", prompt: "how did July go?" },
+  { expected: "get_month_end_report", prompt: "close out June for me" },
+  {
+    expected: "get_month_end_report",
+    prompt: "give me a month-end report for March",
   },
 
   // search_transactions
@@ -157,6 +173,37 @@ const HARD_CASES: ReadonlyArray<{
     note: "maximally vague — any read tool is defensible, a write is not",
     prompt: "show me everything",
   },
+
+  // The five boundaries `get_month_end_report` created. A seventh tool that
+  // sits *between* two existing ones is the worst case for §7's degradation
+  // risk, so these test the neighbours as much as the newcomer: a month-end
+  // report that swallows every question containing a month name has made the
+  // surface worse, not better.
+  {
+    expected: ["get_spending_report", "get_month_end_report"],
+    note: "a month named, but the question is spend — the sharpest new overlap",
+    prompt: "how much did I spend in July?",
+  },
+  {
+    expected: ["get_month_end_report"],
+    note: "month-end intent with no month named; the tool defaults, the model should not invent one",
+    prompt: "how did last month go",
+  },
+  {
+    expected: ["get_envelope_status", "get_month_end_report"],
+    note: "'this month' is in progress — envelope status is the better read, month-end is defensible",
+    prompt: "how am I doing this month?",
+  },
+  {
+    expected: ["get_spending_report"],
+    note: "several months compared — explicitly outside the month-end tool's one-month scope",
+    prompt: "compare June and July for me",
+  },
+  {
+    expected: ["get_spending_report", null],
+    note: "a year, not a month; must not be answered by a month-end report",
+    prompt: "summarise how 2026 went",
+  },
 ];
 
 /** The envelopes the stub pretends exist; `allocate_to_envelope` resolves names against these. */
@@ -207,6 +254,56 @@ function recordingClient(calls: string[]): BookkeeperClient {
         total_overspend: "0.00",
       });
     },
+    getMonthEndReport: (input) => {
+      calls.push("get_month_end_report");
+      const month = input.month ?? "2026-07";
+      return served({
+        allocated_total: "0.00",
+        asof: `${month}-28`,
+        available: "0.00",
+        budgeted_cash: "0.00",
+        categorization: "none",
+        categorized_share: "0",
+        closing_total: "0.00",
+        coverage: "complete",
+        currency: "USD",
+        data_through: null,
+        envelopes: ENVELOPE_NAMES.map((name) => ({
+          allocated: "0.00",
+          closing_balance: "0.00",
+          direction: "flat",
+          direction_reason: "",
+          name,
+          opening_balance: "0.00",
+          over_budget: false,
+          overspend: "0.00",
+          overspent: false,
+          percent_consumed: null,
+          remaining: "0.00",
+          spent: "0.00",
+          status: "unused",
+        })),
+        errors: [],
+        from: `${month}-01`,
+        label: month,
+        month,
+        ok: true,
+        opening_total: "0.00",
+        outliers: [],
+        spent_total: "0.00",
+        summary: "",
+        to: `${month}-28`,
+        total_overspend: "0.00",
+        total_spend: "0.00",
+        transactions: 0,
+        trend_from: null,
+        trend_to: null,
+        unjudged: ENVELOPE_NAMES,
+        unmapped_accounts: [],
+        unmapped_total: "0.00",
+        warnings: [],
+      });
+    },
     getReviewQueue: () => {
       calls.push("get_review_queue");
       return served({
@@ -221,6 +318,7 @@ function recordingClient(calls: string[]): BookkeeperClient {
     getSpendingReport: (input) => {
       calls.push("get_spending_report");
       return served({
+        budget: [],
         currency: "USD",
         errors: [],
         from: input.from,
@@ -230,6 +328,7 @@ function recordingClient(calls: string[]): BookkeeperClient {
         points: [],
         to: input.to,
         total: "0.00",
+        total_allocated: "0.00",
         unmapped_accounts: [],
         unmapped_total: "0.00",
         warnings: [],
@@ -238,9 +337,11 @@ function recordingClient(calls: string[]): BookkeeperClient {
     searchTransactions: (input) => {
       calls.push("search_transactions");
       return served({
+        amount_totals: [],
         errors: [],
         limit: 20,
         matches: [],
+        mixed_currency: false,
         ok: true,
         query: input.q,
         shown: 0,

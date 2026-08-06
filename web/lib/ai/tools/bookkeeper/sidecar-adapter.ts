@@ -3,6 +3,7 @@ import "server-only";
 import {
   allocateToEnvelope as sidecarAllocate,
   getEnvelopes as sidecarGetEnvelopes,
+  getMonthEndReport as sidecarGetMonthEndReport,
   getReviewQueue as sidecarGetReviewQueue,
   getSpendingReport as sidecarGetSpendingReport,
   searchTransactions as sidecarSearchTransactions,
@@ -19,6 +20,7 @@ import type { BookkeeperClient, EnvelopeReport, SidecarResult } from "./client";
 import {
   describeValidationFailure,
   toAllocation,
+  toMonthEndReport,
   toReviewQueue,
   toSpendingReport,
   toSyncStarted,
@@ -97,6 +99,16 @@ export function createSidecarBookkeeperClient(
       // are the same shape, and if the sidecar changes one, `pnpm run
       // sidecar:types` makes it a type error here.
       return narrow(result, (data): EnvelopeReport => data);
+    },
+
+    getMonthEndReport: async (input) => {
+      // `month ?? null` rather than dropping the key: `buildUrl` omits null,
+      // which is what selects the sidecar's ledger-relative default.
+      const result = await sidecarGetMonthEndReport(
+        { month: input.month ?? null },
+        options
+      );
+      return narrow(result, (body) => toMonthEndReport(body, input.month));
     },
 
     getReviewQueue: async (input) => {

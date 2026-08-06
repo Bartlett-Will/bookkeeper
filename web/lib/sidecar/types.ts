@@ -372,6 +372,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reports/month-end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reports Month End
+         * @description The composite month-end report: envelopes, budget vs actual, unmapped.
+         *
+         *     `month` is `YYYY-MM` and defaults to the month of the ledger's last
+         *     transaction rather than the wall-clock month, for the same reason
+         *     `/reports/spending` defaults its window off the ledger's own bounds: a
+         *     report of a fixed ledger must not become an empty one because a day
+         *     passed.
+         *
+         *     An unparseable `month` is a 422 — unlike a refused allocation there is no
+         *     useful payload to return, because there is no month to report on.
+         */
+        get: operations["reports_month_end_reports_month_end_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/budget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reports Budget
+         * @description Allocated vs actually spent per envelope. Both bounds inclusive and optional.
+         *
+         *     Defaults to the ledger's own first and last transaction dates rather than
+         *     a wall-clock window, for the reason `/reports/spending` does: a report of
+         *     a fixed ledger must not change meaning because a day passed.
+         *
+         *     An unparseable date is a 422 -- there is no useful payload to return,
+         *     since the request cannot be answered at all. A backwards window is a 200
+         *     with `ok: false`, because that request *was* answered: the answer is that
+         *     it describes no window.
+         */
+        get: operations["reports_budget_reports_budget_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/trends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reports Trends
+         * @description Spending direction per envelope, and transactions unusual for theirs.
+         *
+         *     Monthly periods only, and deliberately: an envelope budget is a monthly
+         *     instrument (§5.2), and a granularity parameter would let a caller pick
+         *     the one that produced the answer it wanted.
+         *
+         *     Same error split as `/reports/budget`: an unparseable date is a 422, a
+         *     window that describes nothing is a 200 with `ok: false`.
+         */
+        get: operations["reports_trends_reports_trends_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -455,6 +540,73 @@ export interface components {
              * @default default
              */
             source: string;
+        };
+        /**
+         * BudgetLineModel
+         * @description One envelope's allocation against its actual spending over a window.
+         *
+         *     `percent_consumed` is nullable and that is load-bearing, not laziness: an
+         *     allocation of zero has no percentage, and both plausible substitutes are
+         *     wrong in opposite directions (0 reads as untouched, 100 as exhausted).
+         *     `null` is the only value a client cannot misread, and TypeScript will
+         *     make it handle the case.
+         */
+        BudgetLineModel: {
+            /** Name */
+            name: string;
+            /** Allocated */
+            allocated: string;
+            /** Spent */
+            spent: string;
+            /** Remaining */
+            remaining: string;
+            /** Percent Consumed */
+            percent_consumed?: string | null;
+            /** Status */
+            status: string;
+            /** Overspend */
+            overspend: string;
+            /** Carried In */
+            carried_in: string;
+            /** Balance */
+            balance: string;
+        };
+        /** BudgetReportResponse */
+        BudgetReportResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Summary */
+            summary: string;
+            /**
+             * From Date
+             * Format: date
+             */
+            from_date: string;
+            /**
+             * To Date
+             * Format: date
+             */
+            to_date: string;
+            /** Currency */
+            currency: string;
+            /** Envelopes */
+            envelopes: components["schemas"]["BudgetLineModel"][];
+            /** Total Allocated */
+            total_allocated: string;
+            /** Total Spent */
+            total_spent: string;
+            /** Total Remaining */
+            total_remaining: string;
+            /** Total Overspend */
+            total_overspend: string;
+            /** Unmapped Total */
+            unmapped_total: string;
+            /** Unmapped Accounts */
+            unmapped_accounts: string[];
+            /** Errors */
+            errors: string[];
+            /** Warnings */
+            warnings: string[];
         };
         /** CategorizableAccountsResponse */
         CategorizableAccountsResponse: {
@@ -565,6 +717,39 @@ export interface components {
             account: string;
         };
         /**
+         * CurrencyTotalModel
+         * @description What the matches add up to, in one currency, in each direction.
+         *
+         *     Never one scalar. A match set spans accounts, currencies and both
+         *     directions, and a lone figure labelled "total" over that mixture is a
+         *     claim someone would act on and that would be false. `spent` and
+         *     `received` are kept apart so a refund cannot quietly answer "how much did
+         *     I spend" with a smaller number than was spent; `transferred` is money
+         *     moved between the user's own accounts and is in neither, because the
+         *     search returns both legs of a transfer and counting them would report the
+         *     same dollar twice.
+         */
+        CurrencyTotalModel: {
+            /** Currency */
+            currency: string;
+            /** Spent */
+            spent: string;
+            /** Received */
+            received: string;
+            /** Net */
+            net: string;
+            /** Transferred */
+            transferred: string;
+            /** Spend Count */
+            spend_count: number;
+            /** Receipt Count */
+            receipt_count: number;
+            /** Transfer Count */
+            transfer_count: number;
+            /** Accounts */
+            accounts: string[];
+        };
+        /**
          * DecisionModel
          * @description One prediction and what happened to it, mirroring `apply.Decision`.
          */
@@ -643,6 +828,39 @@ export interface components {
             /** Points */
             points: components["schemas"]["SpendPointModel"][];
         };
+        /**
+         * EnvelopeTrendModel
+         * @description One envelope's direction, with the figures the verdict was read from.
+         *
+         *     `slope`, `mean` and `relative_slope` are returned as the values actually
+         *     used, so a client can recompute the classification instead of taking it
+         *     on faith. They are `Decimal` and therefore JSON strings: a trend
+         *     statistic is derived from money and must not be finished in a float in
+         *     the browser.
+         *
+         *     `direction` includes `undetermined`, which is abstention and is *not*
+         *     `flat`. `reason` says which rule produced the verdict either way.
+         */
+        EnvelopeTrendModel: {
+            /** Name */
+            name: string;
+            /** Direction */
+            direction: string;
+            /** Periods Observed */
+            periods_observed: number;
+            /** Total */
+            total: string;
+            /** Mean */
+            mean: string;
+            /** Slope */
+            slope: string;
+            /** Relative Slope */
+            relative_slope?: string | null;
+            /** Reason */
+            reason: string;
+            /** Points */
+            points: components["schemas"]["SpendPointModel"][];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -663,6 +881,212 @@ export interface components {
             account: string;
             /** Balance */
             balance: components["schemas"]["AccountPositionModel"][];
+        };
+        /**
+         * MonthEndEnvelopeModel
+         * @description One envelope's month.
+         *
+         *     `overspent` and `over_budget` are two different failures. Overspent means
+         *     the running balance is negative — money already spent with nothing behind
+         *     it. Over budget means this month's spend exceeded this month's allocation,
+         *     which an envelope with a healthy carried balance can do without ever going
+         *     negative. A client that collapsed them would raise a false alarm or hide a
+         *     real one.
+         */
+        MonthEndEnvelopeModel: {
+            /** Name */
+            name: string;
+            /** Opening Balance */
+            opening_balance: string;
+            /** Allocated */
+            allocated: string;
+            /** Spent */
+            spent: string;
+            /** Closing Balance */
+            closing_balance: string;
+            /** Remaining */
+            remaining: string;
+            /** Overspend */
+            overspend: string;
+            /** Percent Consumed */
+            percent_consumed?: string | null;
+            /** Status */
+            status: string;
+            /** Direction */
+            direction: string;
+            /** Direction Reason */
+            direction_reason: string;
+            /** Overspent */
+            overspent: boolean;
+            /** Over Budget */
+            over_budget: boolean;
+        };
+        /**
+         * MonthEndOutlierModel
+         * @description One transaction that is unusual for its envelope.
+         *
+         *     Carries `median`, `scale` and `scale_method` with it so `score` can be
+         *     recomputed from this one record. A flag whose basis is not visible is not
+         *     a finding a user can check.
+         */
+        MonthEndOutlierModel: {
+            /** Envelope */
+            envelope: string;
+            /**
+             * Posted Date
+             * Format: date
+             */
+            posted_date: string;
+            /** Description */
+            description: string;
+            /** Amount */
+            amount: string;
+            /** Score */
+            score: string;
+            /** Median */
+            median: string;
+            /** Scale */
+            scale: string;
+            /** Scale Method */
+            scale_method: string;
+            /** Threshold */
+            threshold: string;
+        };
+        /** MonthEndReportResponse */
+        MonthEndReportResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Summary */
+            summary: string;
+            /** Month */
+            month: string;
+            /** Label */
+            label: string;
+            /**
+             * From Date
+             * Format: date
+             */
+            from_date: string;
+            /**
+             * To Date
+             * Format: date
+             */
+            to_date: string;
+            /**
+             * Asof
+             * Format: date
+             */
+            asof: string;
+            /** Coverage */
+            coverage: string;
+            /** Data Through */
+            data_through?: string | null;
+            /** Transactions */
+            transactions: number;
+            /** Currency */
+            currency: string;
+            /** Envelopes */
+            envelopes: components["schemas"]["MonthEndEnvelopeModel"][];
+            /** Opening Total */
+            opening_total: string;
+            /** Allocated Total */
+            allocated_total: string;
+            /** Spent Total */
+            spent_total: string;
+            /** Closing Total */
+            closing_total: string;
+            /** Unmapped Total */
+            unmapped_total: string;
+            /** Unmapped Accounts */
+            unmapped_accounts: string[];
+            /** Total Spend */
+            total_spend: string;
+            /** Categorization */
+            categorization: string;
+            /** Categorized Share */
+            categorized_share: string;
+            /** Budgeted Cash */
+            budgeted_cash: string;
+            /** Available */
+            available: string;
+            /** Total Overspend */
+            total_overspend: string;
+            /** Outliers */
+            outliers: components["schemas"]["MonthEndOutlierModel"][];
+            /** Trend From */
+            trend_from?: string | null;
+            /** Trend To */
+            trend_to?: string | null;
+            /** Unjudged */
+            unjudged: string[];
+            /** Errors */
+            errors: string[];
+            /** Warnings */
+            warnings: string[];
+        };
+        /**
+         * OutlierAssessmentModel
+         * @description Whether an envelope was judged for outliers at all, and on what basis.
+         *
+         *     Present for every envelope so that "nothing unusual" stays
+         *     distinguishable from "not enough data to look". Collapsing the two is how
+         *     a report ends up asserting the unfalsifiable "nothing looks unusual".
+         */
+        OutlierAssessmentModel: {
+            /** Envelope */
+            envelope: string;
+            /** Sample Size */
+            sample_size: number;
+            /** Judged */
+            judged: boolean;
+            /** Reason */
+            reason: string;
+            /** Median */
+            median?: string | null;
+            /** Scale */
+            scale?: string | null;
+            /**
+             * Scale Method
+             * @default
+             */
+            scale_method: string;
+            /**
+             * Outliers Found
+             * @default 0
+             */
+            outliers_found: number;
+        };
+        /**
+         * OutlierModel
+         * @description One transaction that is unusual for its envelope.
+         *
+         *     Deliberately self-contained: `median`, `scale` and `threshold` travel
+         *     with the flag so `(amount - median) / scale` can be recomputed from a
+         *     single card. An outlier a user cannot interrogate is worse than none, and
+         *     a chat surface renders these one at a time.
+         */
+        OutlierModel: {
+            /** Envelope */
+            envelope: string;
+            /**
+             * Posted Date
+             * Format: date
+             */
+            posted_date: string;
+            /** Description */
+            description: string;
+            /** Amount */
+            amount: string;
+            /** Score */
+            score: string;
+            /** Median */
+            median: string;
+            /** Scale */
+            scale: string;
+            /** Scale Method */
+            scale_method: string;
+            /** Threshold */
+            threshold: string;
         };
         /**
          * ReviewEntryModel
@@ -907,10 +1331,59 @@ export interface components {
             matches: components["schemas"]["TransactionMatchModel"][];
             /** Total */
             total: number;
+            /** Amount Totals */
+            amount_totals: components["schemas"]["CurrencyTotalModel"][];
+            /** Mixed Currency */
+            mixed_currency: boolean;
             /** Limit */
             limit: number;
             /** Truncated */
             truncated: boolean;
+            /** Errors */
+            errors: string[];
+            /** Warnings */
+            warnings: string[];
+        };
+        /** TrendsReportResponse */
+        TrendsReportResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Summary */
+            summary: string;
+            /**
+             * From Date
+             * Format: date
+             */
+            from_date: string;
+            /**
+             * To Date
+             * Format: date
+             */
+            to_date: string;
+            /** Currency */
+            currency: string;
+            /** Periods */
+            periods: string[];
+            /** Envelopes */
+            envelopes: components["schemas"]["EnvelopeTrendModel"][];
+            /** Outliers */
+            outliers: components["schemas"]["OutlierModel"][];
+            /** Assessments */
+            assessments: components["schemas"]["OutlierAssessmentModel"][];
+            /** Unmapped Total */
+            unmapped_total: string;
+            /** Unmapped Accounts */
+            unmapped_accounts: string[];
+            /** Unmapped Transactions */
+            unmapped_transactions: number;
+            /** Min Periods */
+            min_periods: number;
+            /** Flat Band */
+            flat_band: string;
+            /** Min Transactions */
+            min_transactions: number;
+            /** Outlier Threshold */
+            outlier_threshold: string;
             /** Errors */
             errors: string[];
             /** Warnings */
@@ -1339,6 +1812,101 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpendingReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reports_month_end_reports_month_end_get: {
+        parameters: {
+            query?: {
+                month?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonthEndReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reports_budget_reports_budget_get: {
+        parameters: {
+            query?: {
+                from?: string | null;
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reports_trends_reports_trends_get: {
+        parameters: {
+            query?: {
+                from?: string | null;
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrendsReportResponse"];
                 };
             };
             /** @description Validation Error */
