@@ -173,6 +173,32 @@ option "operating_currency" "USD"
 2026-01-01 open Assets:Checking             USD
 """
 
+#: 10.00 filed of 30.00 spent, so the categorized share is a repeating
+#: decimal and full `Decimal` precision would show as 28 significant digits.
+REPEATING_SHARE_LEDGER = """\
+option "operating_currency" "USD"
+
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Assets:Checking             USD
+2026-01-01 open Expenses:Food:Groceries     USD
+2026-01-01 open Expenses:Unknown            USD
+
+2026-01-01 custom "envelope" "map" "Expenses:Food:Groceries" "Groceries"
+2026-01-01 custom "envelope" "allocate" "Groceries" 100.00 USD
+
+2026-01-01 * "Opening balance"
+    Assets:Checking            1000.00 USD
+    Equity:Opening-Balances
+
+2026-01-05 * "Filed"
+    Assets:Checking             -10.00 USD
+    Expenses:Food:Groceries
+
+2026-01-06 * "Not filed"
+    Assets:Checking             -20.00 USD
+    Expenses:Unknown
+"""
+
 #: January and March, nothing in February. February is genuinely finished and
 #: genuinely empty -- the case where `coverage` and `complete` come apart.
 GAPPED_LEDGER = """\
@@ -524,8 +550,55 @@ def test_a_partly_categorized_month_reports_the_share_it_describes(partly_catego
     assert result.spent_total == Decimal("50.00")
     assert result.unmapped_total == Decimal("150.00")
     assert result.total_spend == Decimal("200.00")
-    assert result.categorized_share == Decimal("50.00") / Decimal("200.00")
+    assert result.categorized_share == Decimal("0.2500")
     assert "25%" in result.render()
+
+
+def test_the_categorized_share_arrives_rounded_not_at_full_precision():
+    """The tool and browser layers must not do arithmetic on money-derived
+    figures, so a ratio arriving at `Decimal`'s 28 significant digits forces
+    them to do the one thing they are forbidden. It has to arrive final.
+
+    10 of 30 is a repeating decimal -- the case that exposes the default and
+    that an exact ratio like 50/200 would not.
+    """
+    result = report(_load(REPEATING_SHARE_LEDGER), "2026-01")
+
+    assert result.spent_total == Decimal("10.00")
+    assert result.total_spend == Decimal("30.00")
+    assert result.categorized_share == Decimal("0.3333")
+    assert -result.categorized_share.as_tuple().exponent == 4
+
+
+def test_the_categorized_share_has_one_serialized_shape(ledger, uncategorized, empty):
+    """`"0"` from the no-spend branch beside `"0.6154"` from the other invites
+    a client to compare the string against `"0"` -- which then works for a
+    month with no spending and fails for one whose share rounds to nothing."""
+    for fixture, month in ((ledger, "2026-02"), (uncategorized, "2026-01"), (empty, "2026-01")):
+        share = report(fixture, month).categorized_share
+        assert -share.as_tuple().exponent == 4, f"{month}: {share!r}"
+        assert str(share) == f"{share:.4f}"
+
+
+@pytest.mark.parametrize("month", ["2026-02", "2025-09", "2026-03"])
+def test_no_figure_leaves_this_module_in_exponent_notation(ledger, uncategorized, month):
+    """`Decimal` division takes the dividend's exponent less the divisor's, so
+    `Decimal(0) / Decimal("150.00")` is `Decimal("0E+2")` and serializes as
+    the string `"0E+2"`. It parses as a number and compares as garbage, and it
+    reached the browser once. Every figure crossing this boundary is checked,
+    not just the one that was caught.
+    """
+    for fixture in (ledger, uncategorized):
+        payload = report(fixture, month).to_dict()
+        for key, value in payload.items():
+            if isinstance(value, str):
+                assert "E" not in value.upper() or key in {"label", "month", "coverage"}, (
+                    f"{key}={value!r} is in exponent notation"
+                )
+        for row in payload["envelopes"]:
+            for key, value in row.items():
+                if isinstance(value, str) and key not in {"name", "status", "direction"}:
+                    assert "E" not in value.upper(), f"envelope {key}={value!r}"
 
 
 def test_a_fully_categorized_month_says_so_without_a_warning_banner(ledger):

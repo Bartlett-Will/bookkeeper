@@ -75,6 +75,11 @@ _FALLBACK_CURRENCY = "USD"
 #: an uncategorized transaction.
 EXPENSE_ACCOUNT_PREFIX = "Expenses:"
 
+#: Precision for ratios leaving this module. Matches
+#: `budget.BudgetLine.consumed_ratio` so the two ratios in one payload do not
+#: disagree about how precise they are.
+_RATIO_PLACES = Decimal("0.0001")
+
 #: How many months of history the direction verdicts are read over, the
 #: reported month included. `trends.MIN_PERIODS` is 3, so this leaves room to
 #: abstain on genuinely new envelopes rather than on every envelope; and it
@@ -309,11 +314,22 @@ class MonthEndReport:
         two ratios in this payload agree on precision.
 
         Zero when nothing was spent, so a caller never divides by zero to
-        discover there is nothing to divide.
+        discover there is nothing to divide — but *quantized* zero, not bare
+        `Decimal(0)`. Two reasons, both found the hard way at the render edge:
+
+        - One shape, always. `"0"` from this branch beside `"0.6154"` from
+          the other invites a client to compare the string against `"0"`,
+          which then works for a month with no spending and fails for a month
+          with a share that rounds to nothing.
+        - No exponent notation. `Decimal` division takes the exponent of the
+          dividend less that of the divisor, so `Decimal(0) / Decimal("150.00")`
+          is `Decimal("0E+2")` and serializes as the string `"0E+2"`. That
+          parses as a number and compares as garbage. Quantizing pins the
+          exponent, which is what keeps it out of the payload.
         """
         total = self.total_spend
         if total <= 0:
-            return Decimal(0)
+            return Decimal(0).quantize(_RATIO_PLACES)
         return (self.spent_total / total).quantize(_RATIO_PLACES)
 
     @property
