@@ -34,12 +34,21 @@ export type GetMonthEndReportResult = BookkeeperToolResult<
  * omitting it is always available and always correct — but the default applied
  * is the *sidecar's*, and that is load-bearing rather than tidy. The sidecar
  * defaults to the month of the ledger's last transaction, which this side
- * cannot compute because it depends on the ledger. Computing a wall-clock
- * default here would also have shipped a measured bug: asked "how did July go"
- * with no date in its prompt, `qwen3:8b` supplied `2023-07` — the year from its
- * training data — and a month-end report confidently rendered for a year the
- * ledger has never seen is worse than one for the wrong month, because it is
- * empty and looks like an answer. So an absent month is forwarded as absent.
+ * cannot compute because it depends on the ledger. A wall-clock default here
+ * would answer "the month that just ended" where the sidecar answers "the last
+ * month you have data for", and on a ledger nobody has synced this week those
+ * are different months — the second is the one the user meant.
+ *
+ * A caution about the evidence, since an earlier version of this comment got it
+ * wrong: without a date in its prompt `qwen3:8b` supplies the year from its
+ * training data, answering "how did July go" with `2023-07`. That is real but
+ * it is **not** a production failure — it was an artifact of
+ * `measure-tool-selection.ts` sending `regularPrompt` alone while the route
+ * sends `systemPrompt`, which appends the date. Measured both ways on
+ * 2026-08-06: bare prompt gives `2023-07`, production prompt gives `2026-07`.
+ * The harness now composes the prompt the route does. So the argument for
+ * forwarding an absent month is the ledger-relative default above, not a
+ * hallucinated year.
  */
 export function getMonthEndReport(client: BookkeeperClient) {
   return tool({

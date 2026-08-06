@@ -468,9 +468,9 @@ export type BookkeeperClient = {
    * Omitting it is not a missing argument — it selects the sidecar's default,
    * which is the month of the ledger's *last transaction* rather than the
    * wall-clock month. That is the better default and it is not one this side
-   * could compute: it depends on the ledger. It also sidesteps a measured
-   * failure — asked "how did July go" with no date in its prompt, `qwen3:8b`
-   * answered `2023-07`, the year from its training data.
+   * could compute: it depends on the ledger. "The last month with data" and
+   * "last calendar month" diverge whenever a sync is overdue, and the first is
+   * what someone closing their books means.
    */
   getMonthEndReport: (input: {
     month?: string;

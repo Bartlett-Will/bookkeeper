@@ -48,7 +48,11 @@ import {
   type PeriodDescription,
 } from "./month-end-model";
 import { DirectionGlyph, OutlierRow } from "./trend-card";
-import { abstentionReason, describeDirection } from "./trend-model";
+import {
+  abstentionReason,
+  describeDirection,
+  outlierScope,
+} from "./trend-model";
 import type { MonthEndEnvelope, MonthEndReportData } from "./types";
 
 export function MonthEndCard({ report }: { report: MonthEndReportData }) {
@@ -404,9 +408,19 @@ function OutlierSection({ report }: { report: MonthEndReportData }) {
             : "text-[12px] text-muted-foreground"
         }
       >
-        {judgedCount <= 0
-          ? `No envelope had enough history to check for unusual transactions, so this is not a finding that nothing was unusual.${unjudgedCount > 0 ? ` ${pluralize(unjudgedCount, "envelope")} went unexamined.` : ""}`
-          : `${report.outliers.length === 0 ? "Nothing unusual" : "Found"} among ${pluralize(judgedCount, "envelope")} with enough history to check${unjudgedCount > 0 ? `; ${unjudgedCount} had too little and went unexamined` : ""}.`}
+        {/*
+          The same sentence the trends card uses, from the same function. Two
+          implementations would be two chances for one of them to drift into
+          the unfalsifiable "nothing looks unusual".
+        */}
+        {outlierScope(
+          {
+            judgedCount: Math.max(0, judgedCount),
+            nothingJudged: judgedCount <= 0 && report.envelopes.length > 0,
+            unjudgedCount,
+          },
+          report.outliers.length
+        )}
         {report.trend_from && report.trend_to
           ? ` Judged against ${formatDate(report.trend_from)} – ${formatDate(report.trend_to)}.`
           : ""}

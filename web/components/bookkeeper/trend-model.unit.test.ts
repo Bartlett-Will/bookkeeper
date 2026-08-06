@@ -5,6 +5,7 @@ import {
   describeTrend,
   formatRelativeSlope,
   outlierCoverage,
+  outlierScope,
   outlierStrip,
   partitionTrends,
 } from "./trend-model";
@@ -201,6 +202,62 @@ describe("outlierCoverage — 'nothing unusual' is only true of what was checked
     // No envelopes at all is "no envelopes exist", not "none could be
     // checked" — the two must not produce the same sentence.
     assert.equal(outlierCoverage([]).nothingJudged, false);
+  });
+});
+
+describe("outlierScope — the sentence that must not become an all-clear", () => {
+  const judgedOnly = { judgedCount: 4, nothingJudged: false, unjudgedCount: 9 };
+
+  it("refuses to let 'nothing found' read as 'nothing is unusual'", () => {
+    const sentence = outlierScope(judgedOnly, 0);
+    assert.match(sentence, /Nothing unusual among/);
+    // The scope is the part that was missing from the unfalsifiable version.
+    assert.match(sentence, /4 envelopes/);
+    assert.match(sentence, /9 had too little history/);
+  });
+
+  it("states scope rather than a negative when something was found", () => {
+    const sentence = outlierScope(judgedOnly, 2);
+    assert.match(sentence, /Checked 4 envelopes/);
+    assert.doesNotMatch(sentence, /Nothing unusual/);
+  });
+
+  it("does not claim an all-clear when nothing could be checked", () => {
+    const sentence = outlierScope(
+      { judgedCount: 0, nothingJudged: true, unjudgedCount: 7 },
+      0
+    );
+    assert.match(sentence, /not a finding that nothing is unusual/);
+  });
+
+  it("does not contradict itself when a flag exists but nothing was assessable", () => {
+    // A screenshot caught the card reporting one flagged transaction and then
+    // announcing that no envelope had enough history to check — true of the
+    // assessments, and nonsense to a reader. Reported as the anomaly it is.
+    const sentence = outlierScope(
+      { judgedCount: 0, nothingJudged: true, unjudgedCount: 7 },
+      1
+    );
+    assert.doesNotMatch(sentence, /not a finding that nothing is unusual/);
+    assert.match(sentence, /scope of this check as unknown/);
+  });
+
+  it("says there was nothing to check rather than nothing unusual", () => {
+    // No envelopes at all is not an all-clear either.
+    const sentence = outlierScope(
+      { judgedCount: 0, nothingJudged: false, unjudgedCount: 0 },
+      0
+    );
+    assert.match(sentence, /no envelopes to check/i);
+  });
+
+  it("omits the unexamined clause when everything was checked", () => {
+    const sentence = outlierScope(
+      { judgedCount: 5, nothingJudged: false, unjudgedCount: 0 },
+      0
+    );
+    assert.doesNotMatch(sentence, /too little history/);
+    assert.match(sentence, /Nothing unusual among the 5 envelopes/);
   });
 });
 

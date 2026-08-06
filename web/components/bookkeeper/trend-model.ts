@@ -23,6 +23,7 @@
  * distinguishable from "not enough data to look".
  */
 
+import { pluralize } from "./format";
 import type {
   EnvelopeTrend,
   OutlierAssessment,
@@ -202,6 +203,46 @@ export function outlierCoverage(
     nothingJudged: assessments.length > 0 && judgedCount === 0,
     unjudgedCount: assessments.length - judgedCount,
   };
+}
+
+/**
+ * The scope of an outlier search, in one sentence.
+ *
+ * The whole point is the negative case: "nothing looks unusual" is short,
+ * unfalsifiable and actionable, and §5.3's amendment names it as the residue
+ * that suppressing numbers did not fix. "Nothing unusual among the 4 we could
+ * check; 9 had too little history" is the same news with its scope attached,
+ * and the scope is the part that was missing.
+ *
+ * `found` is taken into account because the two facts can look contradictory
+ * side by side. A screenshot caught the card reporting one flagged transaction
+ * and then announcing that no envelope had enough history to check — literally
+ * true of the assessments and plainly nonsense to a reader. When something was
+ * found, the sentence states scope; only when nothing was found does it refuse
+ * to let that read as an all-clear.
+ */
+export function outlierScope(coverage: OutlierCoverage, found: number): string {
+  const unexamined =
+    coverage.unjudgedCount > 0
+      ? `${coverage.unjudgedCount} had too little history to check`
+      : "";
+
+  if (coverage.judgedCount === 0) {
+    if (found > 0) {
+      // Contradictory on its face, so it is reported as the anomaly it is
+      // rather than smoothed into either half.
+      return `Flagged ${found} despite no envelope being assessable — treat the scope of this check as unknown.`;
+    }
+    return coverage.unjudgedCount > 0
+      ? `No envelope had enough history to check — ${pluralize(coverage.unjudgedCount, "envelope")} went unexamined, so this is not a finding that nothing is unusual.`
+      : "There were no envelopes to check, so this is not a finding that nothing is unusual.";
+  }
+
+  const scope = `Checked ${pluralize(coverage.judgedCount, "envelope")}${unexamined ? `; ${unexamined}` : ""}.`;
+  if (found > 0) {
+    return scope;
+  }
+  return `Nothing unusual among the ${pluralize(coverage.judgedCount, "envelope")} that could be checked${unexamined ? `; ${unexamined}` : ""}.`;
 }
 
 export type OutlierStrip = {

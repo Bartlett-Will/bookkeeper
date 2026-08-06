@@ -323,9 +323,9 @@ describe("get_month_end_report arguments", () => {
 
   it("forwards an absent month as absent", async () => {
     // Not as a wall-clock default: the sidecar's default is the month of the
-    // ledger's last transaction, and only the sidecar knows that. Measured,
-    // `qwen3:8b` answers "how did July go" with `2023-07` when left to supply
-    // the year itself.
+    // ledger's last transaction, and only the sidecar knows that. Those differ
+    // whenever a sync is overdue, and the ledger's answer is the one someone
+    // closing their books means.
     captured.length = 0;
     await run({});
     assert.deepEqual(captured, [{ month: undefined }]);

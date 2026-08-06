@@ -34,6 +34,7 @@ import {
   abstentionReason,
   formatRelativeSlope,
   outlierCoverage,
+  outlierScope,
   outlierStrip,
   partitionTrends,
   type TrendPresentation,
@@ -131,13 +132,8 @@ export function TrendCard({
           scope attached, and the scope is the part that was missing.
         */}
         <p className="mt-1.5 text-[12px] text-muted-foreground">
-          {coverage.nothingJudged
-            ? `No envelope had enough history to check — ${pluralize(coverage.unjudgedCount, "envelope")} went unexamined, so this is not a finding that nothing is unusual.`
-            : `Checked ${pluralize(coverage.judgedCount, "envelope")}${
-                coverage.unjudgedCount > 0
-                  ? `; ${coverage.unjudgedCount} had too little history to check`
-                  : ""
-              }. A transaction is flagged past ${report.outlier_threshold}× the spread, from at least ${pluralize(report.min_transactions, "transaction")}.`}
+          {outlierScope(coverage, report.outliers.length)}{" "}
+          {`A transaction is flagged past ${report.outlier_threshold}× the spread, from at least ${pluralize(report.min_transactions, "transaction")}.`}
         </p>
       </section>
     </section>
