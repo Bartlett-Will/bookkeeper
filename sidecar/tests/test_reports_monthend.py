@@ -30,6 +30,7 @@ the real `ledger/` is unreachable from here.
 from __future__ import annotations
 
 import calendar
+import re
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -580,25 +581,41 @@ def test_the_categorized_share_has_one_serialized_shape(ledger, uncategorized, e
         assert str(share) == f"{share:.4f}"
 
 
-@pytest.mark.parametrize("month", ["2026-02", "2025-09", "2026-03"])
+#: A number written in exponent form, e.g. `0E+2` or `-1.5e-3`. Matched as a
+#: whole string, so prose that merely contains an "e" is not a false positive.
+EXPONENT_FORM = re.compile(r"^[+-]?\d+(\.\d+)?[eE][+-]?\d+$")
+
+
+def _string_values(value, path=""):
+    """Every string in a nested payload, with the path that reached it."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield from _string_values(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from _string_values(item, f"{path}[{index}]")
+    elif isinstance(value, str):
+        yield path, value
+
+
+@pytest.mark.parametrize("month", ["2026-02", "2025-09", "2026-03", "2027-01"])
 def test_no_figure_leaves_this_module_in_exponent_notation(ledger, uncategorized, month):
     """`Decimal` division takes the dividend's exponent less the divisor's, so
     `Decimal(0) / Decimal("150.00")` is `Decimal("0E+2")` and serializes as
-    the string `"0E+2"`. It parses as a number and compares as garbage, and it
-    reached the browser once. Every figure crossing this boundary is checked,
-    not just the one that was caught.
+    the string `"0E+2"`. That parses as a number and compares as garbage, and
+    it reached the browser once before quantizing pinned the exponent.
+
+    Every string in the payload is checked rather than the one field that was
+    caught, because the next one will be a different field.
     """
     for fixture in (ledger, uncategorized):
         payload = report(fixture, month).to_dict()
-        for key, value in payload.items():
-            if isinstance(value, str):
-                assert "E" not in value.upper() or key in {"label", "month", "coverage"}, (
-                    f"{key}={value!r} is in exponent notation"
-                )
-        for row in payload["envelopes"]:
-            for key, value in row.items():
-                if isinstance(value, str) and key not in {"name", "status", "direction"}:
-                    assert "E" not in value.upper(), f"envelope {key}={value!r}"
+        offenders = [
+            (path, text)
+            for path, text in _string_values(payload)
+            if EXPONENT_FORM.match(text)
+        ]
+        assert offenders == [], f"{month}: {offenders}"
 
 
 def test_a_fully_categorized_month_says_so_without_a_warning_banner(ledger):
