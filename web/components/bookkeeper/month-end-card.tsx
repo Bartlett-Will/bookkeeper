@@ -42,7 +42,7 @@ import { CARD_CHROME } from "./card-chrome";
 import { formatAmount, formatDate, pluralize } from "./format";
 import {
   type CategorizationDescription,
-  categorizedShareLabel,
+  describeBacklog,
   describeCategorization,
   describePeriod,
   type PeriodDescription,
@@ -175,7 +175,9 @@ function CategorizationNotice({
   }
 
   const { severe } = categorization;
-  const share = categorizedShareLabel(report);
+  const backlog = describeBacklog(report, (amount) =>
+    formatAmount(amount, report.currency)
+  );
 
   return (
     <div
@@ -195,11 +197,16 @@ function CategorizationNotice({
         <UncategorizedIcon />
         {categorization.headline}
       </p>
+      {/*
+        The count leads and the amount follows, each with its unit attached.
+        A lone share reads as reassurance: live data had this month 98% filed
+        by amount with 114 transactions still to review, and only one of those
+        two numbers tells the reader how much work is left.
+      */}
       <p className="mt-0.5 text-[12px] text-muted-foreground">
-        {formatAmount(report.unmapped_total, report.currency)} of{" "}
-        {formatAmount(report.total_spend, report.currency)} spent this month is
-        in no envelope{share ? ` — ${share}` : ""}. {categorization.consequence}{" "}
-        Confirm the review queue to bring it in.
+        {backlog.sentence ||
+          `${formatAmount(report.unmapped_total, report.currency)} of ${formatAmount(report.total_spend, report.currency)} spent this month is in no envelope.`}{" "}
+        {categorization.consequence} Confirm the review queue to bring it in.
       </p>
     </div>
   );

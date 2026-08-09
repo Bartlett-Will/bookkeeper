@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  categorizedShareLabel,
+  describeBacklog,
   describeCategorization,
   describePeriod,
 } from "./month-end-model";
@@ -158,22 +158,59 @@ describe("describeCategorization — an uncategorized month is not a frugal one"
   });
 });
 
-describe("categorizedShareLabel", () => {
-  it("renders the sidecar's own share rather than deriving one", () => {
-    assert.match(
-      categorizedShareLabel(monthEnd({ categorized_share: "0.17" })),
-      /17%/
+describe("describeBacklog", () => {
+  // Replaces an earlier percentage label. A share had to be parsed out of a
+  // money-derived string to be rendered, and "17% filed" is a weaker warning
+  // than the count and the amounts it was computed from: "$0.00 in envelopes"
+  // and "87 transactions, $4,102 of $4,102 unfiled" are the same state, and
+  // only the second reads as something to act on.
+  const money = (amount: string) => `$${amount}`;
+
+  it("names the count and both amounts, not a derived percentage", () => {
+    const described = describeBacklog(
+      monthEnd({
+        total_spend: "4102.00",
+        uncategorized_count: 87,
+        unmapped_total: "4102.00",
+      }),
+      money
     );
-    assert.match(
-      categorizedShareLabel(monthEnd({ categorized_share: "1" })),
-      /100%/
-    );
+
+    assert.equal(described.count, 87);
+    assert.match(described.sentence, /87 transactions are not filed/);
+    assert.match(described.sentence, /\$4102\.00 of the \$4102\.00/);
+    assert.doesNotMatch(described.sentence, /%/);
   });
 
-  it("says nothing when the share is unreadable", () => {
-    assert.equal(
-      categorizedShareLabel(monthEnd({ categorized_share: "" })),
-      ""
+  it("says nothing at all when there is no backlog", () => {
+    const described = describeBacklog(
+      monthEnd({ uncategorized_count: 0, unmapped_total: "0.00" }),
+      money
     );
+
+    assert.equal(described.count, 0);
+    assert.equal(described.sentence, "");
+  });
+
+  it("agrees in number with a single unfiled transaction", () => {
+    const described = describeBacklog(
+      monthEnd({ uncategorized_count: 1, unmapped_total: "12.00" }),
+      money
+    );
+
+    assert.match(described.sentence, /1 transaction is not filed/);
+  });
+
+  it("treats a negative count as no backlog rather than rendering it", () => {
+    // The sidecar cannot send one, but a count is the one field here that
+    // would render as a sentence if it arrived malformed, and "-3
+    // transactions are not filed" is worse than silence.
+    const described = describeBacklog(
+      monthEnd({ uncategorized_count: -3 }),
+      money
+    );
+
+    assert.equal(described.count, 0);
+    assert.equal(described.sentence, "");
   });
 });

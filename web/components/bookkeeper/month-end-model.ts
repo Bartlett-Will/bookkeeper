@@ -170,24 +170,51 @@ export function describeCategorization(
 }
 
 /**
- * What can honestly be said about the per-envelope table's completeness.
+ * The size of the categorization backlog, in both units, because one lies.
  *
- * Returns the sidecar's own `categorized_share` untouched for display. It is a
- * `Decimal` string 0–1; the card renders it rather than deriving a share from
- * `spent_total` and `unmapped_total`, which would be exactly the arithmetic
- * `total_spend` exists to keep out of this layer.
+ * This function exists because of a measurement. On live sandbox data the same
+ * July reported `categorized_share: 0.9768` and `uncategorized_count: 114`:
+ * **98% filed by amount, and 114 transactions still to review.** The card used
+ * to print only the share, and "98% of this month's spending is filed" tells a
+ * reader they are nearly done when the actual remaining work is 114 rows.
+ *
+ * Neither unit is wrong and neither is sufficient. The amount says how much of
+ * the *money* the envelope figures below account for — which is what makes
+ * those figures trustworthy or not. The count says how much *work* is left.
+ * A long tail of small uncategorized transactions under a few large
+ * categorized ones produces exactly this split, and it is the normal shape of
+ * a real ledger, not a corner case.
+ *
+ * So both are stated, each with its unit attached, and the bare percentage is
+ * gone. A lone "98%" is the single most reassuring and least informative
+ * number available here.
+ *
+ * No arithmetic: the count and both amounts are read verbatim. In particular
+ * `categorized_count + uncategorized_count` is **not** used as a denominator —
+ * on live data it came to 119 against `transactions: 122`, because transfers
+ * and opening balances are neither. Summing them would invent a total the
+ * sidecar never claimed.
  */
-export function categorizedShareLabel(report: MonthEndReportData): string {
-  const raw = report.categorized_share.trim();
-  // `Number("")` is 0, not NaN. Without this guard a field we could not read
-  // would render as a confident "0% filed" — a claim about the user's ledger
-  // manufactured out of an absence.
-  if (raw.length === 0) {
-    return "";
+export type BacklogDescription = {
+  /** How many transactions still need filing. Zero when there is no backlog. */
+  count: number;
+  /** The sentence, or empty when there is nothing to report. */
+  sentence: string;
+};
+
+export function describeBacklog(
+  report: MonthEndReportData,
+  formatAmount: (amount: string) => string
+): BacklogDescription {
+  const count = Math.max(0, report.uncategorized_count);
+  if (count === 0) {
+    return { count: 0, sentence: "" };
   }
-  const share = Number(raw);
-  if (!Number.isFinite(share) || share < 0) {
-    return "";
-  }
-  return `${Math.round(share * 100)}% of this month's spending is filed`;
+
+  const unfiled = formatAmount(report.unmapped_total);
+  const total = formatAmount(report.total_spend);
+  return {
+    count,
+    sentence: `${count.toLocaleString()} ${count === 1 ? "transaction is" : "transactions are"} not filed to an envelope, covering ${unfiled} of the ${total} spent this month.`,
+  };
 }
