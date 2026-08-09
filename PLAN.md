@@ -670,6 +670,35 @@ rendered in chat.
 > piece of work: pull two models, run the existing harnesses
 > (`web/scripts/measure-tool-selection.ts` for tool calling, `bookkeeper eval`
 > for categorization accuracy), fill in the table.
+>
+> **Attempted 2026-08-09 and blocked on the network, not on the work.**
+> `ollama pull phi4:14b` and `gemma3:12b` both ran for ~3 hours at 1.3–2.0 MB/s,
+> reset once from ~2 GB back to ~150 MB, and finally exited 1 with
+> `max retries exceeded: … connection reset by peer`. Neither model installed;
+> roughly 11 GB of resumable partial blobs are left in `~/.ollama/models/blobs`,
+> so a retry does not start from zero.
+>
+> What *was* measured is the `qwen3:8b` row, and it answers a question §5.4 had
+> left open since Phase 3 — whether tier 4 earns its cost against the
+> statistical tier that "sets the floor the LLM must beat":
+>
+> | tier | coverage | precision | top-1 |
+> |---|---|---|---|
+> | statistical | 86.7% | 96.2% | 83.3% |
+> | **llm** | **100.0%** | 95.0% | **95.0%** |
+> | cascade (no LLM) | 93.3% | 96.4% | 90.0% |
+> | **cascade (with LLM)** | **100.0%** | 95.0% | **95.0%** |
+>
+> It beats the floor: 95.0% against 83.3% tier-on-tier, lifting the cascade from
+> 90.0% to 95.0% and coverage to 100% for a 1.4-point precision cost. Tool
+> calling on the same model: 25/25 standard, 14/15 adversarial, median 1.5 s.
+>
+> Auto-apply still stays off with the LLM tier in play — best band 100% over 37
+> held-out predictions, 95% lower bound 90.6% against a 95% target. Same
+> conclusion as §5.5 reached without it, now with more of the cascade measured.
+>
+> `scripts/model_bakeoff.sh` and `scripts/bakeoff_table.py` run both halves for
+> any model and keep the raw logs, so resuming is a pull and one command.
 
 > **Reports half complete, 2026-08-09.** Budget vs actual, trends with outlier
 > detection, and the month-end report all ship, rendered as cards in chat.
