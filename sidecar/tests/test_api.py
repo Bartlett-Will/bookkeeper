@@ -1570,3 +1570,161 @@ def test_health_distinguishes_two_ledgers_that_are_otherwise_identical(
         "for the case it exists to serve"
     )
     assert copy_root == str(copy.resolve())
+
+
+# --- reconcile ------------------------------------------------------------
+#
+# The endpoint takes parsed lines rather than a file path: the sidecar never
+# reads the user's disk on the browser's behalf (§9), so the CSV parser serves
+# the CLI and HTTP callers send what they parsed. A *discrepancy* is a 200
+# with `ok: false` — the client asked a question and got the answer.
+
+
+def test_reconcile_endpoint_matches_a_balance_with_no_lines(fixture_root):
+    """The minimum statement: "on this date my balance was X"."""
+    fixture_root("basic")
+    client = TestClient(app)
+    resp = client.post(
+        "/reconcile",
+        json={
+            "account": "Checking",
+            "closing_date": "2026-01-31",
+            "closing_balance": "3758.00",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["reconciled"] is True
+    assert body["delta"] == "0.00"
+    assert body["account"] == "Assets:Checking"
+    # The `balance-date + 1` convention, returned rather than left for a
+    # client to rediscover.
+    assert body["assertion_date"] == "2026-02-01"
+
+
+def test_reconcile_endpoint_returns_a_discrepancy_as_200_not_an_error(fixture_root):
+    fixture_root("basic")
+    client = TestClient(app)
+    resp = client.post(
+        "/reconcile",
+        json={
+            "account": "Checking",
+            "closing_date": "2026-01-31",
+            "closing_balance": "3838.00",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["delta"] == "80.00"
+    kinds = [f["kind"] for f in body["findings"]]
+    assert "amount-match" in kinds
+    finding = next(f for f in body["findings"] if f["kind"] == "amount-match")
+    assert finding["confirmed"] is False
+    assert finding["ledger_entries"][0]["amount"] == "-80.00"
+    # Shortened to the part that identifies the entry, and pointing at the
+    # real directive — this is the field that makes a finding actionable.
+    assert finding["ledger_entries"][0]["location"] == "transactions/2026.beancount:18"
+
+
+def test_reconcile_endpoint_diffs_supplied_statement_lines(fixture_root):
+    fixture_root("basic")
+    client = TestClient(app)
+    resp = client.post(
+        "/reconcile",
+        json={
+            "account": "Checking",
+            "closing_date": "2026-01-31",
+            "closing_balance": "3708.00",
+            "from_date": "2026-01-26",
+            "lines": [
+                {"posted_date": "2026-01-28", "amount": "-50.00", "description": "TRADER JOES"},
+                {"posted_date": "2026-01-30", "amount": "-50.00", "description": "HARDWARE"},
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    missing = [f for f in body["findings"] if f["kind"] == "missing"]
+    assert len(missing) == 1
+    assert missing[0]["confirmed"] is True
+    assert missing[0]["statement_lines"][0]["description"] == "HARDWARE"
+    # The named transaction is the whole gap.
+    assert body["explained"] == body["delta"] == "-50.00"
+    assert body["residual"] == "0.00"
+
+
+def test_reconcile_endpoint_serialises_every_amount_as_a_string(fixture_root):
+    """Money must not round-trip through a float on its way to the browser."""
+    fixture_root("basic")
+    client = TestClient(app)
+    body = client.post(
+        "/reconcile",
+        json={
+            "account": "Checking",
+            "closing_date": "2026-01-31",
+            "closing_balance": "3758.01",
+        },
+    ).json()
+    for key in ("statement_balance", "ledger_balance", "delta", "explained", "residual"):
+        assert isinstance(body[key], str), key
+    assert body["delta"] == "0.01"
+
+
+def test_reconcile_endpoint_rejects_an_unknown_field(fixture_root):
+    """`StrictRequest`: an 8B model picks these arguments, and a near-miss on
+    a field name is exactly what one emits."""
+    fixture_root("basic")
+    client = TestClient(app)
+    resp = client.post(
+        "/reconcile",
+        json={
+            "account": "Checking",
+            "date": "2026-01-31",
+            "closing_balance": "3758.00",
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_reconcile_endpoint_refuses_a_balance_with_no_date(fixture_root):
+    fixture_root("basic")
+    client = TestClient(app)
+    resp = client.post("/reconcile", json={"account": "Checking", "closing_balance": "1.00"})
+    assert resp.status_code == 422
+    assert "closing_date" in resp.json()["detail"]
+
+
+def test_reconcile_endpoint_refuses_a_request_with_nothing_to_compare(fixture_root):
+    fixture_root("basic")
+    client = TestClient(app)
+    resp = client.post("/reconcile", json={"account": "Checking"})
+    assert resp.status_code == 422
+    assert "nothing to reconcile against" in resp.json()["detail"]
+
+
+def test_reconcile_endpoint_refuses_an_ambiguous_account_with_422(fixture_root):
+    fixture_root("basic")
+    client = TestClient(app)
+    resp = client.post(
+        "/reconcile",
+        json={"account": "Nonexistent", "closing_date": "2026-01-31", "closing_balance": "1.00"},
+    )
+    assert resp.status_code == 422
+    assert "no account matches" in resp.json()["detail"]
+
+
+def test_reconcile_endpoint_still_answers_when_the_ledger_has_load_errors(fixture_root):
+    """Unlike /reports/month-end, which 500s. The likeliest reason a ledger
+    fails to load is a *failing balance assertion* — the exact condition
+    someone reaches for reconciliation to diagnose."""
+    fixture_root("bean_check_failure")
+    client = TestClient(app)
+    resp = client.post(
+        "/reconcile",
+        json={"account": "Checking", "closing_date": "2026-01-31", "closing_balance": "1.00"},
+    )
+    assert resp.status_code == 200
+    assert any("run `bookkeeper verify`" in n or "/verify" in n for n in resp.json()["notes"])

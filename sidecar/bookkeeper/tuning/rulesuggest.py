@@ -893,10 +893,25 @@ def suggest_rules(
     by_key = {g.key: g for g in groups}
     try:
         candidates, undecided_clusters = _candidates(groups, memory_evidence, history_evidence)
+        # The whole uncategorized backlog, not just the candidate's own keys.
+        #
+        # A rule is measured by running it, and once pasted into `rules.yaml`
+        # it runs against everything. Measuring it against only the
+        # transactions it was derived from understated what it would do -- one
+        # suggestion reported 6 occurrences where the printed YAML matched 12 --
+        # and a count a user weighs an acceptance against must be the count
+        # they will actually get.
+        #
+        # It also made `CONFLICT_CONFIRMED_MEMORY` unreachable. Within a
+        # candidate every remembered key agrees with the proposed account by
+        # construction, so scanning only those keys could never find a
+        # contradiction; the disagreement lives in the transactions the pattern
+        # reaches *outside* the group it was built from, which is exactly the
+        # case worth warning about.
         built = [
             _build_suggestion(
                 candidate,
-                [txn for key in candidate.keys for txn in by_key[key].transactions],
+                transactions,
                 ctx,
                 memory_evidence,
                 history_evidence,

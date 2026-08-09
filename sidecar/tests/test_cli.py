@@ -290,3 +290,152 @@ def test_search_shows_a_total_over_the_matches(read_only_fixture, capsys):
     assert "Totals over all 5 matching transaction(s)" in out
     assert "spent            365.00" in out
     assert "net spend        365.00" in out
+
+
+# --- reconcile ------------------------------------------------------------
+#
+# Its own subcommand rather than a `verify` check, and that is the design
+# decision under test here as much as the dispatch: reconciliation cannot run
+# without a statement, and `verify` runs unattended on every sync. A check
+# with no input there is either a permanent no-op or a permanent failure, and
+# both teach the user to ignore a red `verify`.
+
+
+def test_reconcile_against_a_balance_alone_exits_zero_when_it_matches(
+    read_only_fixture, capsys
+):
+    """The case every user can produce, with no file at all: "on this date my
+    balance was X". The `basic` fixture asserts 3758.00 at 2026-02-01, which
+    is the closing balance of 2026-01-31."""
+    read_only_fixture("basic")
+    assert main(["reconcile", "Checking", "--balance", "3758.00", "--on", "2026-01-31"]) == 0
+    out = capsys.readouterr().out
+    assert "reconcile: OK" in out
+    assert "2026-02-01 balance Assets:Checking" in out
+
+
+def test_reconcile_exits_one_on_a_discrepancy_and_names_candidates(
+    read_only_fixture, capsys
+):
+    read_only_fixture("basic")
+    # 80.00 more than the ledger holds, matching the 2026-01-05 grocery run
+    # of -80.00 — far enough from the closing date that no date-boundary
+    # reading applies, so this is the bare amount-match case.
+    assert main(["reconcile", "Checking", "--balance", "3838.00", "--on", "2026-01-31"]) == 1
+    out = capsys.readouterr().out
+    assert "reconcile: DOES NOT MATCH" in out
+    assert "Difference (statement - ledger)" in out
+    # Narrowed to a named transaction, not left as a scalar.
+    assert "AMOUNT-MATCH" in out
+    assert "Groceries" in out
+    assert "2026-01-05" in out
+
+
+def test_reconcile_prefers_a_date_boundary_reading_near_the_closing_date(
+    read_only_fixture, capsys
+):
+    """The 2026-01-28 grocery run of -50.00 sits three days before the closing
+    date, so a 50.00 gap is far likelier to be the bank not having posted it
+    yet than a transaction that should not exist."""
+    read_only_fixture("basic")
+    assert main(["reconcile", "Checking", "--balance", "3808.00", "--on", "2026-01-31"]) == 1
+    out = capsys.readouterr().out
+    assert "DATE-BOUNDARY" in out
+    assert "not a duplicate" in out
+
+
+def test_reconcile_reads_a_csv_export(read_only_fixture, tmp_path, capsys):
+    read_only_fixture("basic")
+    export = tmp_path / "january.csv"
+    export.write_text(
+        "Posting Date,Description,Debit,Credit\n"
+        "01/01/2026,OPENING DEPOSIT,,3000.00\n"
+        "01/02/2026,ACME PAYROLL,,2500.00\n"
+        "01/03/2026,LANDLORD RENT,1200.00,\n"
+        "01/05/2026,TRADER JOES,80.00,\n"
+        "01/07/2026,BISTRO,40.00,\n"
+        "01/09/2026,SHELL,35.00,\n"
+        "01/11/2026,CITY ELECTRIC,90.00,\n"
+        "01/13/2026,TRADER JOES,70.00,\n"
+        "01/15/2026,BISTRO,60.00,\n"
+        "01/16/2026,BISTRO REFUND,,60.00\n"
+        "01/18/2026,BISTRO,30.00,\n"
+        "01/20/2026,SHELL,32.00,\n"
+        "01/22/2026,TRADER JOES,75.00,\n"
+        "01/25/2026,CITY WATER,40.00,\n"
+        "01/28/2026,TRADER JOES,50.00,\n",
+        encoding="utf-8",
+    )
+    exit_code = main(
+        [
+            "reconcile",
+            "Checking",
+            "--balance",
+            "3758.00",
+            "--on",
+            "2026-01-31",
+            "--statement",
+            str(export),
+            "--since",
+            "2026-01-01",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 0, out
+    assert "Matched 15 of 15 statement line(s)" in out
+
+
+def test_reconcile_refuses_a_balance_with_no_date_without_a_traceback(
+    read_only_fixture, capsys
+):
+    read_only_fixture("basic")
+    assert main(["reconcile", "Checking", "--balance", "3758.00"]) == 1
+    assert "needs the date it was the balance on" in capsys.readouterr().out
+
+
+def test_reconcile_refuses_a_run_with_nothing_to_reconcile_against(
+    read_only_fixture, capsys
+):
+    read_only_fixture("basic")
+    assert main(["reconcile", "Checking"]) == 1
+    assert "nothing to reconcile against" in capsys.readouterr().out
+
+
+def test_reconcile_answers_an_unknown_account_with_a_message(read_only_fixture, capsys):
+    read_only_fixture("basic")
+    assert main(["reconcile", "Brokerage", "--balance", "1.00", "--on", "2026-01-31"]) == 1
+    out = capsys.readouterr().out
+    assert "no account matches" in out
+    assert "Assets:Checking" in out
+
+
+def test_reconcile_answers_an_unreadable_statement_with_a_message(
+    read_only_fixture, tmp_path, capsys
+):
+    read_only_fixture("basic")
+    export = tmp_path / "bad.csv"
+    export.write_text("When,What,How Much\n2026-01-05,X,-1.00\n", encoding="utf-8")
+    assert (
+        main(["reconcile", "Checking", "--statement", str(export), "--balance", "1.00",
+              "--on", "2026-01-31"])
+        == 1
+    )
+    assert "no date column" in capsys.readouterr().out
+
+
+def test_reconcile_keeps_the_statement_balance_exact(read_only_fixture, capsys):
+    """`type=float` on --balance would round the statement's cents before the
+    module that exists to compare cents ever saw them."""
+    read_only_fixture("basic")
+    main(["reconcile", "Checking", "--balance", "$3,758.01", "--on", "2026-01-31"])
+    assert "-0.01" in capsys.readouterr().out
+
+
+def test_reconcile_does_not_write_to_the_ledger(read_only_fixture):
+    """A read-only command run against the committed fixture: if it wrote
+    anything, every other test's result would depend on whether this one had
+    run yet."""
+    root = read_only_fixture("basic")
+    before = {p: p.read_bytes() for p in sorted((root / "ledger").rglob("*.beancount"))}
+    main(["reconcile", "Checking", "--balance", "1.00", "--on", "2026-01-31"])
+    assert {p: p.read_bytes() for p in sorted((root / "ledger").rglob("*.beancount"))} == before
