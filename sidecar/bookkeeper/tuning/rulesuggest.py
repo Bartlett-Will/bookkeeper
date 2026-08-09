@@ -941,6 +941,36 @@ def suggest_rules(
     undecided.sort(key=lambda u: (-u.occurrences, -u.total_amount, u.normalized_keys))
 
     shown = suggestions if limit is None else suggestions[:limit]
+
+    # Distinct transactions, not the sum of per-suggestion counts.
+    #
+    # Two patterns can reach the same transaction -- `amazon` also matches
+    # every `AMAZON WEB SERVICES` line -- so summing `occurrences` counts it
+    # once per rule that would fire. On the demo backlog that claimed 42 of 46
+    # covered where 36 distinct transactions are, and with enough overlapping
+    # patterns the total can exceed `uncategorized_total` outright, which is a
+    # coverage figure arguing for its own suggestions using a number that
+    # cannot be true.
+    #
+    # Recomputed by running each shown rule rather than by tracking ids on the
+    # suggestion, so the union is measured through the same matcher the rules
+    # will meet in `rules.yaml`.
+    # Keyed on position in the pool rather than on `simplefin_id`: the id is
+    # unique per account in real data but is not guaranteed present at all
+    # here, and two transactions sharing one would silently collapse into a
+    # single "covered" transaction -- understating coverage instead of
+    # overstating it, which is the same class of wrong number in the other
+    # direction.
+    covered: set[int] = set()
+    for suggestion in shown:
+        compiled = _compile_rule(
+            _rule_dict(suggestion.name, suggestion.pattern, suggestion.account, suggestion.sign),
+            0,
+        )
+        for index, txn in enumerate(transactions):
+            if _matches(compiled, txn):
+                covered.add(index)
+
     return RuleSuggestions(
         ok=True,
         applied=False,
@@ -948,7 +978,7 @@ def suggest_rules(
         undecided=tuple(undecided if limit is None else undecided[:limit]),
         uncategorized_total=len(transactions),
         merchants_seen=len(groups),
-        covered_by_suggestions=sum(s.occurrences for s in shown),
+        covered_by_suggestions=len(covered),
         min_occurrences=threshold,
         ranked_by=RANKED_BY,
         shown=len(shown),

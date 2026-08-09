@@ -796,19 +796,6 @@ def test_the_claimed_count_is_reproduced_by_running_the_printed_yaml(
         assert len(_matched_indices(s, backlog)) == s.occurrences, s.name
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG (reported, not fixed): `covered_by_suggestions` is "
-        "`sum(s.occurrences)`, which double-counts a transaction two patterns "
-        "both reach. Since the pool was widened it reports 42 of a 46-transaction "
-        "backlog where 36 distinct transactions are covered -- 91% claimed "
-        "against 78% actual. The overlap is `amazon` also reaching the six "
-        "`AMAZON WEB SERVICES` transactions. On real data with more overlapping "
-        "patterns the figure can exceed `uncategorized_total` outright. Remove "
-        "this marker when the total is taken over distinct transactions."
-    ),
-)
 def test_the_covered_count_does_not_double_count_a_transaction(result, entries):
     """"These suggestions clear N of your backlog" is the headline number a
     user decides how much of this report to act on by, and it is the one
