@@ -671,6 +671,37 @@ rendered in chat.
 > (`web/scripts/measure-tool-selection.ts` for tool calling, `bookkeeper eval`
 > for categorization accuracy), fill in the table.
 
+> **Reports half complete, 2026-08-09.** Budget vs actual, trends with outlier
+> detection, and the month-end report all ship, rendered as cards in chat.
+> `bookkeeper budget` / `trends` / `month-end` keep §9's headless parity.
+> **CI now exists** (`.github/workflows/ci.yml`), so §5.5's regression gate is
+> enforced rather than merely written — it had been unenforced since Phase 3.
+>
+> **One new tool, `get_month_end_report`, and only one.** Budget and trend data
+> ride inside the existing spending response, and the measured "how much did I
+> spend at Whole Foods" gap is closed by `amount_totals` on search rather than
+> by more tools. Re-measured at seven tools: **25/25 standard, 14/15
+> adversarial**, with all ten of Phase 4's adversarial cases still passing, so
+> the surface did not degrade and §7's shrink-the-surface fallback stays unused.
+>
+> **A finding about the instrument, not the model.** The selection harness had
+> always passed `regularPrompt` while the route sends `systemPrompt()` —
+> `regularPrompt` plus the date — so every figure this project has quoted was
+> measured against a prompt the app never sends. Corrected. Selection was
+> *unchanged*, but the gap was not harmless: it moved the **arguments**. Asked
+> "how did July go?" the bare prompt answered `2023-07`, a year out of training
+> data, where production answers `2026-07`. The harness records only which tool
+> was picked, so it was blind to the failure it was inducing. Worth remembering
+> before trusting a pass/fail count from it again.
+>
+> **Three distinctions this phase had to learn, each one a field that looked
+> like one and was two.** A window is what a report *covers*; the last
+> transaction is where the data *stops* (`through` vs `data_through`). A month
+> can be finished and empty at once (`complete` vs `coverage`). And a negative
+> running balance is not this month's spend exceeding this month's allocation
+> (`overspent` vs `over_budget`). Collapsing any of them produces a confident
+> wrong answer in exactly the case the report exists to handle.
+
 ### Phase 6 — Real data
 Claim a real SimpleFIN token, backfill history, reconcile against actual
 statements, tune envelopes and rules against real spending.
