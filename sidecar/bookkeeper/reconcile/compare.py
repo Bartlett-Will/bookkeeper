@@ -361,6 +361,15 @@ class ReconcileResult:
         lines.append("")
         lines.extend(self._headline_lines())
 
+        # Hoisted above everything else, because when it fires the whole rest
+        # of the page is an artifact of reading the file backwards. Left in
+        # its ordinary place it sits below a list of findings that a reader
+        # has already started acting on.
+        for finding in self.findings:
+            if finding.kind == KIND_SIGN_CONVENTION:
+                lines.append("")
+                lines.append(f"  READ THIS FIRST: {finding.explanation}")
+
         if self.statement_lines:
             lines.append("")
             lines.append(
@@ -375,7 +384,13 @@ class ReconcileResult:
         # to be readable at a glance while hunting one transaction.
         confirmed = self.confirmed_findings
         moving = tuple(f for f in confirmed if f.delta != 0)
-        context = tuple(f for f in confirmed if f.delta == 0)
+        # The sign-convention warning is excluded here because it was already
+        # printed above, in full. It is the one finding that is hoisted, and
+        # printing it a second time under a milder heading would undercut the
+        # hoist rather than reinforce it.
+        context = tuple(
+            f for f in confirmed if f.delta == 0 and f.kind != KIND_SIGN_CONVENTION
+        )
         if moving:
             lines.append("")
             lines.append("What accounts for the difference")
@@ -674,8 +689,19 @@ def _line_diff_findings(
     cutoff: date | None,
     tolerance: int,
     period: tuple[date, date] | None = None,
+    absorbed: dict[str, int] | None = None,
 ) -> tuple[list[Finding], int]:
     """Confirmed findings from a line-by-line diff, and the match count.
+
+    `absorbed` maps a `simplefin-id` to how many unmatched ledger entries
+    carrying it have *already* been accounted for by a dedup-key duplicate
+    finding, and is consumed as those entries are met. Without it the same
+    double-import is reported twice — once as the broken dedup-key invariant
+    it is, once again as a resemblance this pass rediscovered — and, far
+    worse, both deltas are summed into `explained`, so the arithmetic
+    double-counts the fix and blames the leftover on a discrepancy before the
+    statement period. Finding the real cause and then pointing somewhere else
+    is the worst thing this module can do.
 
     Order matters and is the point: matched-but-shifted pairs are classified
     first, so a transaction the bank dated a day earlier can never fall
@@ -751,10 +777,35 @@ def _line_diff_findings(
             )
         )
 
+    # Absorption runs as its own pass, before anything is classified, because
+    # the entries it takes out must also stop being *evidence*. A spurious
+    # copy the dedup-key check already reported is not available to prove that
+    # the copy beside it is a duplicate too — with the pool left whole, a
+    # charge imported twice and absent from the statement comes back as one
+    # dedup duplicate plus a resemblance-duplicate whose text says "the bank
+    # recorded the transaction once" when the bank recorded it zero times.
+    #
+    # Only the extra copies are absorbed, never the whole group: one member is
+    # a legitimate transaction, and if the bank does not list that one either
+    # it is a genuine `EXTRA` that still has to be reported. Which member the
+    # matcher happened to pair up does not matter — they are interchangeable —
+    # so the budget is a count. Out-of-period entries are skipped first, so
+    # they cannot spend budget that an in-period copy needs.
+    budget = dict(absorbed or {})
+    absorbed_ids: set[int] = set()
+    unexplained: list[LedgerEntry] = []
     for entry in unmatched_entries:
         if period is not None and not period[0] <= entry.date <= period[1]:
             continue
-        twin = _looks_like_duplicate_of(entry, all_entries, tolerance)
+        if entry.simplefin_id and budget.get(entry.simplefin_id, 0) > 0:
+            budget[entry.simplefin_id] -= 1
+            absorbed_ids.add(id(entry))
+            continue
+        unexplained.append(entry)
+
+    twin_pool = tuple(e for e in all_entries if id(e) not in absorbed_ids)
+    for entry in unexplained:
+        twin = _looks_like_duplicate_of(entry, twin_pool, tolerance)
         delta = -entry.amount if _inside(entry.date, cutoff) else Decimal(0)
         if twin is not None:
             findings.append(
@@ -794,6 +845,7 @@ def _hypotheses(
     all_entries: tuple[LedgerEntry, ...],
     cutoff: date | None,
     tolerance: int,
+    already_named: frozenset[int] = frozenset(),
 ) -> list[Finding]:
     """Candidate explanations for a gap, from the ledger alone.
 
@@ -809,7 +861,12 @@ def _hypotheses(
     is simply absent.
     """
     findings: list[Finding] = []
-    claimed: set[int] = set()
+    # Entries an observed finding already accounts for start out claimed, so a
+    # pair reported as a *confirmed* duplicate is not then offered again as a
+    # hypothesis about itself. Two findings naming the same two entries reads
+    # as two problems, and the second one contradicts the first by calling a
+    # measurement a guess.
+    claimed: set[int] = set(already_named)
 
     def take(entry: LedgerEntry) -> bool:
         if id(entry) in claimed:
@@ -849,6 +906,12 @@ def _hypotheses(
             continue
         twin = _looks_like_duplicate_of(entry, all_entries, tolerance)
         if twin is not None and take(entry):
+            # Claim the twin too. Both halves of a suspected pair have the
+            # amount that closes the gap and both have a twin, so without this
+            # the same pair is offered twice as two "alternatives" that are in
+            # fact one — and the candidate list, whose whole value is being
+            # short, doubles in length saying nothing new.
+            take(twin)
             findings.append(
                 Finding(
                     kind=KIND_DUPLICATE,
@@ -1057,7 +1120,13 @@ def reconcile_entries(
     else:
         window = in_period = ledger_entries
 
+    # How many spurious copies the dedup-key check has already accounted for,
+    # per id. Consumed by the line diff below so the same double-import is not
+    # reported — and counted — a second time.
+    absorbed: dict[str, int] = {}
     for group in _duplicate_dedup_keys(window):
+        if group[0].simplefin_id:
+            absorbed[group[0].simplefin_id] = len(group) - 1
         findings.append(
             Finding(
                 kind=KIND_DUPLICATE,
@@ -1085,7 +1154,9 @@ def reconcile_entries(
     if statement.lines:
         inverted = _sign_convention_note(statement.lines, window, tolerance)
         if inverted:
-            notes.append(inverted)
+            # Carried as a finding only, not also as a note: the render prints
+            # both sections, and forty identical words twice on one page reads
+            # as a formatting bug rather than as emphasis.
             findings.append(
                 Finding(
                     kind=KIND_SIGN_CONVENTION,
@@ -1095,11 +1166,22 @@ def reconcile_entries(
                 )
             )
         diff, matched = _line_diff_findings(
-            statement.lines, window, ledger_entries, cutoff, tolerance, period
+            statement.lines, window, ledger_entries, cutoff, tolerance, period, absorbed
         )
         findings.extend(diff)
-    elif delta is not None and delta != 0:
-        findings.extend(_hypotheses(delta, ledger_entries, cutoff, tolerance))
+    elif delta is not None:
+        # Hunt the *unexplained* part of the gap, not the whole of it. Anything
+        # already observed — a dedup-key duplicate, most often — has both
+        # explained its share and ruled itself out as a hypothesis, so
+        # searching for the full delta looks for an explanation of something
+        # that is no longer unexplained. When nothing is left over there is
+        # nothing to hypothesise about, and this is what stops the fallback
+        # below from printing "nothing in the ledger accounts for this
+        # difference" directly beneath a finding that accounted for all of it.
+        remaining = delta - sum((f.delta for f in findings if f.confirmed), Decimal(0))
+        if remaining != 0:
+            named = frozenset(id(e) for f in findings for e in f.ledger_entries)
+            findings.extend(_hypotheses(remaining, ledger_entries, cutoff, tolerance, named))
 
     findings.extend(_feed_findings(entries, account, statement, assertion_date))
 

@@ -193,8 +193,13 @@ _DESCRIPTION_ALIASES = (
 )
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
-#: Everything a bank puts around a number that is not part of it.
-_MONEY_NOISE = re.compile(r"[,\s $£€¥]|(?<=\d)\s*(?:USD|EUR|GBP|CAD|AUD)\b", re.IGNORECASE)
+#: Everything a bank puts around a number that is not part of it: thousands
+#: separators, whitespace, a currency symbol, or a currency code appended to
+#: the figure. Stripped unconditionally rather than matched in context -- an
+#: amount column is the one place a bank's decoration is guaranteed not to be
+#: data, and anything left over that is not a number still fails `Decimal`
+#: loudly, naming the text it could not read.
+_MONEY_NOISE = re.compile(r"[,\s$£€¥]|USD|EUR|GBP|CAD|AUD", re.IGNORECASE)
 
 
 def _normalize_header(name: str) -> str:

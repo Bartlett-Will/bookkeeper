@@ -596,6 +596,112 @@ def test_distinct_simplefin_ids_are_not_a_duplicate():
     assert kinds(result) == []
 
 
+#: A charge imported twice under one dedup key — the shape every genuine
+#: double-import takes, since every imported transaction carries a
+#: `simplefin-id`.
+DOUBLE_IMPORT = txn("2026-01-20", "COSTCO", "-47.13", sfid="tx-2") + txn(
+    "2026-01-20", "COSTCO", "-47.13", sfid="tx-2"
+)
+
+
+def test_a_double_import_is_counted_once_when_a_statement_lists_the_charge():
+    """Regression. Two confirmed findings used to describe the same pair — the
+    dedup-key check reporting the broken invariant, and the line diff
+    rediscovering the leftover copy as a resemblance — and *both* deltas were
+    summed into `explained`. The arithmetic then double-counted the fix and
+    charged the difference to a phantom discrepancy before the period.
+
+    That is the worst failure available to this module. It found the entire
+    cause and then sent the user somewhere else to look for it, with an
+    `Accounted for` figure that cannot be right on its face. Someone
+    reconciling already suspects their books are wrong; a confident wrong
+    destination is worse than no answer.
+    """
+    entries, options = _load(DOUBLE_IMPORT)
+    # The bank has the charge once, so its closing balance is one GAP below
+    # the opening — and the ledger, holding it twice, is a further GAP below.
+    statement = csv_statement("2026-01-20,COSTCO,-47.13\n", str(OPENING - GAP))
+    result = reconcile_entries(entries, statement, options=options)
+
+    assert kinds(result).count(KIND_DUPLICATE) == 1, kinds(result)
+    finding = only_confirmed(result, KIND_DUPLICATE)
+    assert "share the SimpleFIN id 'tx-2'" in finding.explanation
+
+    # The arithmetic closes exactly: the duplicate is the whole difference.
+    assert result.delta == GAP
+    assert result.explained == GAP
+    assert result.residual == 0
+    assert not any("not accounted for by anything" in n for n in result.notes)
+
+
+def test_only_the_spurious_copies_of_a_double_import_are_absorbed():
+    """The other half of the fix, and the reason it counts copies rather than
+    suppressing the whole dedup group: one member of the group is a real
+    transaction. When the bank does not list it either, that member is a
+    genuine `EXTRA` and still has to be reported — over-correcting here would
+    trade a double-count for a silent omission.
+    """
+    entries, options = _load(txn("2026-01-05", "TRADER JOES", "-80.00") + DOUBLE_IMPORT)
+    # The statement knows about the groceries and nothing else.
+    statement = csv_statement("2026-01-05,TRADER JOES,-80.00\n", str(OPENING - 80))
+    result = reconcile_entries(entries, statement, options=options)
+
+    assert kinds(result).count(KIND_DUPLICATE) == 1, kinds(result)
+    assert kinds(result).count(KIND_EXTRA) == 1, kinds(result)
+    assert result.delta == 2 * GAP
+    assert result.explained == 2 * GAP
+    assert result.residual == 0
+
+
+def test_a_confirmed_duplicate_is_not_followed_by_a_candidate_contradicting_it():
+    """Regression. `_hypotheses` used to be handed the whole gap even when a
+    confirmed finding had already explained all of it. Finding nothing left to
+    claim, it fell through to its last-resort branch and printed "nothing in
+    the ledger accounts for this difference" directly beneath a finding that
+    accounted for every cent of it.
+
+    "Unexplained 0.00" and "nothing accounts for this" cannot both be true,
+    and a report that contradicts itself on the same screen is one a user
+    stops believing — including the half of it that was right.
+    """
+    entries, options = _load(DOUBLE_IMPORT)
+    result = reconcile_entries(
+        entries, balance_only(str(OPENING - GAP)), options=options
+    )
+
+    assert only_confirmed(result, KIND_DUPLICATE).delta == GAP
+    assert result.explained == GAP
+    assert result.residual == 0
+    assert result.candidates == (), kinds(result)
+    assert KIND_MISSING not in kinds(result)
+
+    text = result.render()
+    assert "Unexplained            0.00" in text
+    assert "nothing in the ledger accounts for this difference" not in text
+
+
+def test_a_partly_explained_gap_still_hypothesises_about_the_remainder():
+    """The complement of the test above: suppressing the fallback must not
+    suppress the search. With a confirmed duplicate covering part of the gap,
+    the candidates offered are for what is *left*, not for the whole
+    difference — hunting the full delta would look for an explanation of
+    something already explained."""
+    entries, options = _load(
+        DOUBLE_IMPORT + txn("2026-01-22", "HARDWARE", "-12.00")
+    )
+    # Duplicate accounts for GAP; the bank also never posted the 12.00.
+    result = reconcile_entries(
+        entries, balance_only(str(OPENING - GAP)), options=options
+    )
+
+    assert result.explained == GAP
+    assert result.residual == Decimal("12.00")
+    candidate = only(result, KIND_AMOUNT_MATCH)
+    assert candidate.confirmed is False
+    assert candidate.ledger_entries[0].description == "HARDWARE"
+    assert candidate.delta == Decimal("12.00")
+
+
 # =========================================================================
 # `ok` vs `reconciled`: a right total is not a right ledger.
 # =========================================================================
