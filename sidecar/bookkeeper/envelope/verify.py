@@ -15,6 +15,10 @@
 3. Balance assertions / bean-check — `beancount.loader.load_file` already
    runs the same plugin pipeline `bean-check` does, so its `errors` list
    *is* bean-check's output; we just surface it instead of shelling out.
+4. Assertion *coverage* — whether check 3 is actually guarding each
+   SimpleFIN-backed account, and how far. Added in Phase 6 alongside
+   `bookkeeper reconcile`; see `_assertion_coverage_notes` for why it is
+   here and why it is a note.
 
 Overspent envelopes are reported as **notes, not errors**, and this is a
 deliberate choice rather than an oversight. `verify` is the integrity gate:
@@ -38,7 +42,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-from beancount.core.data import Custom, Transaction
+from beancount.core.data import Balance, Custom, Transaction
 from beancount.parser import printer
 
 from bookkeeper.envelope.compute import compute_envelope_state, load_ledger
@@ -50,6 +54,10 @@ from bookkeeper.envelope.directives import (
 )
 
 EXPENSE_ACCOUNT_PREFIX = "Expenses:"
+
+#: The accounts `bookkeeper.ingest` opens and is responsible for asserting a
+#: balance on. Check 4 is scoped to these; see `_assertion_coverage_notes`.
+SIMPLEFIN_ASSET_PREFIX = "Assets:SimpleFIN:"
 
 
 @dataclass
@@ -97,6 +105,86 @@ def _find_unmapped_expense_accounts(entries, known_accounts: set[str]) -> set[st
     return unmapped
 
 
+def _assertion_coverage_notes(entries) -> list[str]:
+    """Where the cash-truth guard (§5.2 item 3) is not actually guarding.
+
+    **Why this belongs in `verify` when full reconciliation does not.** §5.2
+    item 3's promise is that "if we ever drop or duplicate a transaction,
+    `bean-check` fails at the next assertion date". Check 3 above enforces the
+    assertions that exist. Nothing enforced that they exist at all — and
+    `render_balances_file` rewrites `balances.beancount` wholesale from
+    whatever SimpleFIN currently reports, so an account that stops being
+    reported loses its assertion and the guard silently stops covering it,
+    with a green `verify` throughout. That is the one part of reconciliation
+    that needs no statement, so it is the one part that can run unattended on
+    every sync. Comparing against an actual statement cannot: it needs an
+    input `verify` does not have, which is why `bookkeeper reconcile` is its
+    own command.
+
+    Scoped to `Assets:SimpleFIN:` deliberately. Those are the accounts
+    `bookkeeper.ingest` opens and is responsible for asserting; a hand-written
+    ledger's own asset accounts were never promised an assertion, and flagging
+    them would fire on every fixture in the test suite — noise that trains
+    people to stop reading this section.
+
+    Notes, not errors, for the reason the module docstring gives about
+    overspend: an unasserted account does not make the books *wrong*. It
+    means one guard is not armed. Failing the build on it would gate every
+    sync on a condition the user cannot always fix (a bank can revoke a
+    connection), and a `verify` people learn to ignore costs us the checks
+    that genuinely matter.
+    """
+    posted: dict[str, date] = {}
+    for entry in entries:
+        if not isinstance(entry, Transaction):
+            continue
+        for posting in entry.postings:
+            account = posting.account
+            if not account.startswith(SIMPLEFIN_ASSET_PREFIX) or posting.units is None:
+                continue
+            posted[account] = max(entry.date, posted.get(account, entry.date))
+
+    asserted: dict[str, date] = {}
+    for entry in entries:
+        if not isinstance(entry, Balance):
+            continue
+        if not entry.account.startswith(SIMPLEFIN_ASSET_PREFIX):
+            continue
+        asserted[entry.account] = max(entry.date, asserted.get(entry.account, entry.date))
+
+    notes: list[str] = []
+    for account in sorted(posted):
+        latest_assertion = asserted.get(account)
+        if latest_assertion is None:
+            notes.append(
+                f'no balance assertion covers "{account}", which has postings through '
+                f"{posted[account].isoformat()}. The §5.2 cash-truth guard is not armed "
+                "for this account: a dropped or duplicated transaction here would not "
+                "fail bean-check. Run `bookkeeper sync` to regenerate balances.beancount."
+            )
+            continue
+        # A `balance` directive dated D asserts the balance at the *start* of
+        # D (see `normalize.NormalizedBalance`), so it covers transactions
+        # dated strictly before D. Anything on or after D is unguarded, and
+        # comparing the two dates without that offset would report a
+        # correctly-covered account as one day short on every sync.
+        unguarded = sum(
+            1
+            for e in entries
+            if isinstance(e, Transaction)
+            and e.date >= latest_assertion
+            and any(p.account == account for p in e.postings)
+        )
+        if unguarded:
+            notes.append(
+                f'"{account}" is asserted only through {latest_assertion.isoformat()}; '
+                f"{unguarded} later transaction(s) are not covered by any assertion. "
+                "That is normal between syncs — it stops being normal if it does not "
+                "move after one."
+            )
+    return notes
+
+
 def _latest_activity_date(entries) -> date | None:
     """Latest date among transactions and envelope directives.
 
@@ -125,6 +213,9 @@ def verify_entries(entries, bean_errors) -> VerifyResult:
 
     # Check 3: balance assertions / bean-check.
     errors.extend(_format_bean_errors(bean_errors))
+
+    # Check 4: is check 3 actually covering the SimpleFIN-backed accounts?
+    notes.extend(_assertion_coverage_notes(entries))
 
     # Checks 1: unmapped accounts, and the "mapped to >1 envelope" case.
     try:

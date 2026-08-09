@@ -61,6 +61,17 @@ class SyncResult:
     # "currently present," matching what's actually on disk.
     balances_written: int = 0
     opening_balances_written: int = 0
+    # The range the returned data actually *spans* -- first and last posted
+    # date among the transactions this fetch carried, `None` when it carried
+    # none. Deliberately not the same fact as the window that was requested:
+    # a 90-day request whose account went quiet for a month spans less than
+    # it asked for, and a caller that reads the requested window as coverage
+    # reports a confident wrong answer (the `through` vs `data_through`
+    # distinction `reports/monthend.py` already draws). Counts transactions
+    # *seen*, not added, so a rerun that adds nothing still reports the span
+    # the server served.
+    data_from: date | None = None
+    data_through: date | None = None
     errors: list[str] = field(default_factory=list)
     commit: CommitResult | None = None
 
@@ -128,14 +139,56 @@ def _since_to_epoch(since: str | None) -> int | None:
     return int(datetime(d.year, d.month, d.day, tzinfo=UTC).timestamp())
 
 
-def run_sync(since: str | None = None, demo: bool = False) -> SyncResult:
+def _until_to_epoch(until: str | None) -> int | None:
+    """The *last second* of `until`, not its midnight.
+
+    `start-date`/`end-date` are epoch seconds, so an end date rendered as
+    midnight would exclude everything that posted during the day the caller
+    named -- a paginated backfill would then drop a day at every window
+    boundary and look complete while doing it. End-of-day also keeps a
+    90-calendar-day window one second short of 90*86400, which is the side
+    of the server's cap we want to be on (`ingest/backfill.py`).
+    """
+    if until is None:
+        return None
+    d = date.fromisoformat(until)
+    midnight_after = datetime(d.year, d.month, d.day, tzinfo=UTC) + timedelta(days=1)
+    return int(midnight_after.timestamp()) - 1
+
+
+def run_sync(
+    since: str | None = None,
+    demo: bool = False,
+    *,
+    until: str | None = None,
+    write_opening_balances: bool = True,
+) -> SyncResult:
+    """Fetch one window and write it into the ledger.
+
+    `until` closes the window at the far end; without it the server decides
+    where the range stops. It exists for `ingest/backfill.py`, which is the
+    only caller that needs a *bounded* window -- a plain sync wants
+    "everything since", not "everything between".
+
+    `write_opening_balances=False` defers the one-time
+    `Equity:Opening-Balances` plug (see the loop below). A plug is
+    `balance - (transactions this sync added)`, which is only right when
+    this sync added everything there is; across a multi-window backfill it
+    is right for the first window and wrong by the sum of every later one.
+    Backfill therefore suppresses it per window and writes the plugs once,
+    from the complete on-disk history, when the whole range is covered.
+    """
     try:
         access_url = _ensure_access_url(demo)
     except Exception as exc:  # noqa: BLE001 - surfaced via SyncResult, not raised
         return SyncResult(ok=False, errors=[str(exc)])
 
     try:
-        account_set = fetch_accounts(access_url, start_date=_since_to_epoch(since))
+        account_set = fetch_accounts(
+            access_url,
+            start_date=_since_to_epoch(since),
+            end_date=_until_to_epoch(until),
+        )
     except Exception as exc:  # noqa: BLE001
         return SyncResult(ok=False, errors=[str(exc)])
 
@@ -190,7 +243,7 @@ def run_sync(since: str | None = None, demo: bool = False) -> SyncResult:
     # reconcile for any account with activity older than the window).
     opening_by_year: dict[int, list[OpeningBalance]] = {}
     opening_written = 0
-    for account in account_set.accounts:
+    for account in account_set.accounts if write_opening_balances else ():
         asset_account = simplefin_asset_account(account)
         if asset_account in accounts_with_opening:
             continue
@@ -257,6 +310,7 @@ def run_sync(since: str | None = None, demo: bool = False) -> SyncResult:
             f"Sync {added} transaction(s) from {len(account_set.accounts)} account(s)"
         )
 
+    posted_dates = [t.posted_date for t in normalized_txns]
     return SyncResult(
         ok=True,
         accounts_synced=len(account_set.accounts),
@@ -265,6 +319,8 @@ def run_sync(since: str | None = None, demo: bool = False) -> SyncResult:
         pending_skipped=pending_skipped,
         balances_written=len(balances),
         opening_balances_written=opening_written,
+        data_from=min(posted_dates) if posted_dates else None,
+        data_through=max(posted_dates) if posted_dates else None,
         errors=errors,
         commit=commit_result,
     )

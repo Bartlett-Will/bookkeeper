@@ -7,6 +7,9 @@ future chat tools is a design requirement (PLAN.md §9), not an afterthought.
 
     claim    -> bookkeeper.simplefin.claim:claim_token(setup_token) -> str
     sync     -> bookkeeper.ingest.sync:run_sync(since=None, demo=False) -> SyncResult
+    backfill -> bookkeeper.ingest.backfill:run_backfill(from_date, to_date=None,
+                     dry_run=True, restart=False, max_requests=None, demo=False)
+                     -> BackfillResult
     verify   -> bookkeeper.envelope.verify:run_verify() -> VerifyResult
     envelopes-> bookkeeper.envelope.compute:envelope_report(asof=None) -> EnvelopeReport
     categorize-> bookkeeper.categorize.apply:run_categorize(apply=False, limit=None,
@@ -25,6 +28,12 @@ future chat tools is a design requirement (PLAN.md §9), not an afterthought.
                      -> TrendsReport
     allocate -> bookkeeper.envelope.allocate:allocate_to_envelope(envelope, amount,
                      currency="USD", allocated_on=None) -> AllocateResult
+    reconcile-> bookkeeper.reconcile.compare:run_reconcile(account, balance=None, on=None,
+                     statement=None, since=None, count=None, window=3,
+                     flip_signs=False) -> ReconcileResult
+    suggest-rules-> bookkeeper.tuning.rulesuggest:suggest_rules(limit=None,
+                     min_occurrences=MIN_OCCURRENCES) -> RuleSuggestions
+    envelope-gaps-> bookkeeper.tuning.gaps:envelope_gaps() -> EnvelopeGaps
     serve    -> bookkeeper.api:serve(host, port)
 
 Each result object must expose `.ok: bool` and `.render() -> str` so this dispatcher
@@ -50,6 +59,24 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     from bookkeeper.ingest.sync import run_sync
 
     result = run_sync(since=args.since, demo=args.demo)
+    print(result.render())
+    return 0 if result.ok else 1
+
+
+def _cmd_backfill(args: argparse.Namespace) -> int:
+    from bookkeeper.ingest.backfill import run_backfill
+
+    if args.dry_run and args.execute:
+        print("backfill failed: --dry-run and --execute are mutually exclusive")
+        return 1
+    result = run_backfill(
+        args.from_date,
+        args.to,
+        dry_run=not args.execute,
+        restart=args.restart,
+        max_requests=args.max_requests,
+        demo=args.demo,
+    )
     print(result.render())
     return 0 if result.ok else 1
 
@@ -173,6 +200,44 @@ def _cmd_allocate(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def _cmd_suggest_rules(args: argparse.Namespace) -> int:
+    from bookkeeper.tuning.rulesuggest import suggest_rules
+
+    result = suggest_rules(limit=args.limit, min_occurrences=args.min_occurrences)
+    print(result.render())
+    return 0 if result.ok else 1
+
+
+def _cmd_envelope_gaps(args: argparse.Namespace) -> int:
+    from bookkeeper.tuning.gaps import envelope_gaps
+
+    result = envelope_gaps()
+    print(result.render())
+    return 0 if result.ok else 1
+
+
+def _cmd_reconcile(args: argparse.Namespace) -> int:
+    from bookkeeper.reconcile.compare import run_reconcile
+
+    # No try/except here, unlike `report` and its siblings: `run_reconcile`
+    # answers an unreadable statement, an unknown account and an unparseable
+    # date with a failed result rather than an exception, because the useful
+    # thing to print in every one of those cases is a reconciliation report
+    # that says why it could not run.
+    result = run_reconcile(
+        args.account,
+        balance=args.balance,
+        on=args.on,
+        statement=args.statement,
+        since=args.since,
+        count=args.count,
+        window=args.window,
+        flip_signs=args.flip_signs,
+    )
+    print(result.render())
+    return 0 if result.ok else 1
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from bookkeeper.api import serve
 
@@ -192,6 +257,37 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--since", default=None, help="ISO date lower bound")
     s.add_argument("--demo", action="store_true", help="Use the SimpleFIN demo server")
     s.set_defaults(func=_cmd_sync)
+
+    # Backfill previews by default and requires --execute to spend a request
+    # (PLAN.md §3.1: ~24/day, hard). Same shape as `categorize --apply`, and
+    # for a sharper reason: a preview that should have been a run costs a
+    # retype, a run that should have been a preview costs a fifth of the day's
+    # budget and cannot be given back. `--dry-run` is accepted explicitly so a
+    # caller who states their intent need not know the default.
+    bf = sub.add_parser("backfill", help="Fetch history in <=90-day windows (§3.1)")
+    bf.add_argument("--from", dest="from_date", required=True, help="ISO date; inclusive")
+    bf.add_argument("--to", default=None, help="ISO date; inclusive. Defaults to today (UTC)")
+    bf.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List the windows that would be requested and spend nothing (the default)",
+    )
+    bf.add_argument(
+        "--execute", action="store_true", help="Actually spend requests against the daily budget"
+    )
+    bf.add_argument(
+        "--max-requests",
+        type=int,
+        default=None,
+        help="Send at most N requests, then stop and record where to resume",
+    )
+    bf.add_argument(
+        "--restart",
+        action="store_true",
+        help="Re-fetch windows a previous run already completed (spends real budget)",
+    )
+    bf.add_argument("--demo", action="store_true", help="Use the SimpleFIN demo server")
+    bf.set_defaults(func=_cmd_backfill)
 
     v = sub.add_parser("verify", help="Run ledger + envelope integrity checks")
     v.set_defaults(func=_cmd_verify)
@@ -280,6 +376,67 @@ def build_parser() -> argparse.ArgumentParser:
     al.add_argument("--currency", default="USD")
     al.add_argument("--on", default=None, help="ISO date the allocation is recorded under")
     al.set_defaults(func=_cmd_allocate)
+
+    # Phase 6 tuning. Both are read-only advisors and neither has an --apply
+    # flag, deliberately: review-everything is the shipped default (decision
+    # 5) and §5.5 raises autonomy only on measured evidence, so a command
+    # that wrote the rules it invented would be raising it on none.
+    sr = sub.add_parser(
+        "suggest-rules", help="Propose rules.yaml entries for recurring merchants"
+    )
+    sr.add_argument("--limit", type=int, default=None, help="Show at most N suggestions")
+    # No default spelled out here: resolving it would mean importing the
+    # tuning module (and beancount behind it) to build a parser, on every
+    # invocation of every subcommand. The value actually used is echoed in
+    # the report's first line and in its `min_occurrences` field, so it is
+    # discoverable where it matters rather than only in --help.
+    sr.add_argument(
+        "--min-occurrences",
+        type=int,
+        default=None,
+        dest="min_occurrences",
+        help="Transactions a merchant needs before a rule is proposed",
+    )
+    sr.set_defaults(func=_cmd_suggest_rules)
+
+    eg = sub.add_parser(
+        "envelope-gaps", help="Expense accounts with spending and no envelope mapping"
+    )
+    eg.set_defaults(func=_cmd_envelope_gaps)
+
+    # Reconciliation against a real bank statement (§5.2 item 3, Phase 6's
+    # exit criterion). Its own command rather than a `verify` check because it
+    # cannot run without a statement, and `verify` runs unattended on every
+    # sync -- a check with no input there is either a permanent no-op or a
+    # permanent failure, and both teach the user to ignore a red `verify`.
+    #
+    # `--balance` stays a string all the way in, exactly as `allocate`'s does:
+    # `type=float` would round the statement's cents before the module that
+    # exists to compare cents ever saw them.
+    rc = sub.add_parser("reconcile", help="Check an account against a bank statement (§5.2)")
+    rc.add_argument("account", help="Account or its leaf, e.g. Checking")
+    rc.add_argument("--balance", default=None, help="Statement closing balance, e.g. 4212.55")
+    rc.add_argument("--on", default=None, help="ISO date the closing balance is for")
+    rc.add_argument("--statement", default=None, help="Path to the bank's CSV export")
+    rc.add_argument(
+        "--since", default=None, help="First ISO date the statement covers (default: its first line)"
+    )
+    rc.add_argument(
+        "--count", type=int, default=None, help="Transaction count the statement states"
+    )
+    rc.add_argument(
+        "--window",
+        type=int,
+        default=3,
+        help="Days apart two records may be dated and still be one transaction (default 3)",
+    )
+    rc.add_argument(
+        "--flip-signs",
+        action="store_true",
+        dest="flip_signs",
+        help="Negate every statement amount (for exports where withdrawals are positive)",
+    )
+    rc.set_defaults(func=_cmd_reconcile)
 
     r = sub.add_parser("serve", help="Run the FastAPI sidecar")
     r.add_argument("--host", default="127.0.0.1")

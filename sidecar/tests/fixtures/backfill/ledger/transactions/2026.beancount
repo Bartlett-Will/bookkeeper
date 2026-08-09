@@ -1,0 +1,170 @@
+; The ledger's span is 2026-01-01 .. 2026-06-15, so January through May are
+; complete months and June is a partial one. Every monthly figure this
+; fixture is used to check depends on that distinction.
+
+2026-01-01 * "Opening balance"
+    Assets:Checking              3000.00 USD
+    Equity:Opening-Balances
+
+; --- already categorized: the ledger-history evidence source ---------------
+
+2026-01-04 * "SAFEWAY #1100"
+    simplefin-id: "h-1"
+    Assets:Checking               -62.10 USD
+    Expenses:Food:Groceries
+
+2026-01-12 * "SAFEWAY #2200"
+    simplefin-id: "h-2"
+    Assets:Checking               -48.90 USD
+    Expenses:Food:Groceries
+
+; A different merchant that a broad "blue bottle" pattern would also reach,
+; booked somewhere else on purpose.
+2026-02-02 * "BLUE BOTTLE COFFEE BAR"
+    simplefin-id: "h-3"
+    Assets:Checking               -18.00 USD
+    Expenses:Food:Dining
+
+; --- unmapped account 1: five complete months of history ------------------
+
+2026-01-06 * "UBER TRIP 4A2C"
+    simplefin-id: "r-1"
+    Assets:Checking               -24.00 USD
+    Expenses:Transport:Rideshare
+
+2026-01-20 * "UBER TRIP 9F11"
+    simplefin-id: "r-2"
+    Assets:Checking               -16.00 USD
+    Expenses:Transport:Rideshare
+
+2026-02-05 * "UBER TRIP 22B8"
+    simplefin-id: "r-3"
+    Assets:Checking               -31.00 USD
+    Expenses:Transport:Rideshare
+
+2026-03-09 * "UBER TRIP 77C1"
+    simplefin-id: "r-4"
+    Assets:Checking               -19.00 USD
+    Expenses:Transport:Rideshare
+
+2026-04-14 * "UBER TRIP 51D0"
+    simplefin-id: "r-5"
+    Assets:Checking               -28.00 USD
+    Expenses:Transport:Rideshare
+
+2026-05-11 * "UBER TRIP 66E3"
+    simplefin-id: "r-6"
+    Assets:Checking               -22.00 USD
+    Expenses:Transport:Rideshare
+
+; Inside the partial trailing month, so it is excluded from the monthly mean
+; and included in the all-time total. The two figures differ by exactly this.
+2026-06-03 * "UBER TRIP 88F4"
+    simplefin-id: "r-7"
+    Assets:Checking               -40.00 USD
+    Expenses:Transport:Rideshare
+
+; --- unmapped account 2: one complete month, below the minimum ------------
+
+2026-05-20 * "MONKEYBRAINS"
+    simplefin-id: "i-1"
+    Assets:Checking               -55.00 USD
+    Expenses:Utilities:Internet
+
+; --- the backlog: six SAFEWAY across two normalized keys ------------------
+
+2026-01-15 * "SAFEWAY #1234"
+    simplefin-id: "u-1"
+    Assets:Checking               -71.20 USD
+    Expenses:Unknown
+
+2026-02-15 * "SAFEWAY #1298"
+    simplefin-id: "u-2"
+    Assets:Checking               -64.35 USD
+    Expenses:Unknown
+
+2026-03-15 * "SAFEWAY STORE 4471"
+    simplefin-id: "u-3"
+    Assets:Checking               -55.00 USD
+    Expenses:Unknown
+
+2026-04-15 * "SAFEWAY #1355"
+    simplefin-id: "u-4"
+    Assets:Checking               -80.05 USD
+    Expenses:Unknown
+
+2026-05-15 * "SAFEWAY STORE 4471"
+    simplefin-id: "u-5"
+    Assets:Checking               -49.00 USD
+    Expenses:Unknown
+
+2026-06-01 * "POS DEBIT - SAFEWAY 9001"
+    simplefin-id: "u-6"
+    Assets:Checking               -37.40 USD
+    Expenses:Unknown
+
+; --- the backlog: five BLUE BOTTLE, one normalized key --------------------
+
+2026-01-16 * "BLUE BOTTLE 8829"
+    simplefin-id: "u-7"
+    Assets:Checking                -6.50 USD
+    Expenses:Unknown
+
+2026-02-16 * "BLUE BOTTLE 8830"
+    simplefin-id: "u-8"
+    Assets:Checking                -6.50 USD
+    Expenses:Unknown
+
+2026-03-16 * "BLUE BOTTLE 8831"
+    simplefin-id: "u-9"
+    Assets:Checking                -7.25 USD
+    Expenses:Unknown
+
+2026-04-16 * "BLUE BOTTLE 8832"
+    simplefin-id: "u-10"
+    Assets:Checking                -6.50 USD
+    Expenses:Unknown
+
+2026-05-16 * "BLUE BOTTLE 8833"
+    simplefin-id: "u-11"
+    Assets:Checking                -8.00 USD
+    Expenses:Unknown
+
+; --- the backlog: five PG&E, one normalized key ---------------------------
+
+2026-01-17 * "PG&E WEB ONLINE"
+    simplefin-id: "u-12"
+    Assets:Checking               -94.00 USD
+    Expenses:Unknown
+
+2026-02-17 * "ACH DEBIT - PG&E WEB ONLINE"
+    simplefin-id: "u-13"
+    Assets:Checking              -101.50 USD
+    Expenses:Unknown
+
+2026-03-17 * "PG&E WEB ONLINE"
+    simplefin-id: "u-14"
+    Assets:Checking               -88.75 USD
+    Expenses:Unknown
+
+2026-04-17 * "PG&E WEB ONLINE"
+    simplefin-id: "u-15"
+    Assets:Checking               -79.20 USD
+    Expenses:Unknown
+
+2026-05-17 * "PG&E WEB ONLINE"
+    simplefin-id: "u-16"
+    Assets:Checking              -110.00 USD
+    Expenses:Unknown
+
+; --- the tail: a one-off nobody should be asked to write a rule for -------
+
+2026-06-15 * "BERKELEY KAYAK RENTAL"
+    simplefin-id: "u-17"
+    Assets:Checking               -45.00 USD
+    Expenses:Unknown
+
+2026-02-22 * "ANNUAL INSURANCE PREMIUM"
+    simplefin-id: "u-18"
+    Assets:Checking             -2000.00 USD
+    Expenses:Unknown

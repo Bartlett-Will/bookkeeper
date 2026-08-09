@@ -1,0 +1,22 @@
+; What a ledger looks like a few minutes after a real backfill: a handful of
+; already-confirmed transactions, a large `Expenses:Unknown` backlog
+; dominated by a few recurring merchants, and two expense accounts that were
+; opened and posted to but never mapped to an envelope.
+
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Assets:Checking                     USD
+
+2026-01-01 open Expenses:Food:Groceries             USD
+2026-01-01 open Expenses:Food:Dining                USD
+2026-01-01 open Expenses:Utilities:Electric         USD
+
+; Mapped to no envelope on purpose -- these are the gaps.
+2026-01-01 open Expenses:Transport:Rideshare        USD
+2026-01-01 open Expenses:Utilities:Internet         USD
+
+; The catch-all. Unmapped, and deliberately never to be mapped.
+2026-01-01 open Expenses:Unknown                    USD
+
+2026-01-01 custom "envelope" "map" "Expenses:Food:Groceries"      "Groceries"
+2026-01-01 custom "envelope" "map" "Expenses:Food:Dining"         "Dining Out"
+2026-01-01 custom "envelope" "map" "Expenses:Utilities:Electric"  "Utilities"

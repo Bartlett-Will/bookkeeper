@@ -46,11 +46,19 @@ from bookkeeper import paths
 from bookkeeper.envelope.compute import EnvelopeReport, coerce_asof, compute_envelope_state
 from bookkeeper.envelope.verify import verify_entries
 from bookkeeper.ingest.sync import SyncResult, run_sync
+from bookkeeper.reconcile.compare import MATCH_WINDOW_DAYS
 
 #: The `jobs` registry key for a SimpleFIN sync. One kind means one running
 #: sync at a time, which is what keeps a double-clicked *Sync* from spending
 #: two of SimpleFIN's ~24 daily requests (§3.1).
 SYNC_JOB_KIND = "sync"
+
+#: The `jobs` registry key for a paginated backfill. A separate kind because
+#: its result has a different shape and `/backfill/status` must not be handed
+#: a sync's; the two are nonetheless kept from running at once by an explicit
+#: check in `backfill_start`, since they spend from the same ~24 requests a
+#: day (§3.1) and a backfill can spend five of them in one go.
+BACKFILL_JOB_KIND = "backfill"
 
 
 class _LedgerCache:
@@ -832,6 +840,204 @@ def sync_status(job_id: str) -> SyncStatusResponse:
 
 
 # --------------------------------------------------------------------------
+# Paginated backfill (§3.1, Phase 6)
+# --------------------------------------------------------------------------
+
+
+class BackfillRequest(StrictRequest):
+    #: ISO dates, inclusive at both ends. `to_date` defaults to today (UTC)
+    #: in `run_backfill`, not here, so the CLI and the sidecar cannot drift
+    #: on what "no end date" means.
+    from_date: str
+    to_date: str | None = None
+    max_requests: int | None = None
+    restart: bool = False
+    demo: bool = False
+
+
+class BackfillWindowModel(BaseModel):
+    index: int
+    start: date
+    end: date
+    days: int
+    #: `planned` / `done` / `already-done` / `capped` / `failed` / `skipped`.
+    #: Only the first two of those after `planned` count as coverage.
+    state: str
+    requests: int
+    transactions_seen: int
+    transactions_added: int
+    data_from: date | None = None
+    data_through: date | None = None
+    errors: list[str]
+
+
+class BackfillResponse(BaseModel):
+    """One backfill run or preview, with all three date ranges kept apart.
+
+    `requested_*`, `honoured_*` and `data_*` are three different facts and
+    the browser must not compute any of them from the others -- a window the
+    server capped honoured less than it was asked for, and an account that
+    was quiet spans less than was honoured. Field-for-field
+    `BackfillResult.to_dict()`, which is also the job payload below.
+    """
+
+    ok: bool
+    summary: str
+    dry_run: bool
+    complete: bool
+    requested_from: date | None = None
+    requested_to: date | None = None
+    honoured_from: date | None = None
+    honoured_through: date | None = None
+    data_from: date | None = None
+    data_through: date | None = None
+    windows: list[BackfillWindowModel]
+    requests_made: int
+    requests_planned: int
+    requests_used_today: int
+    requests_remaining_today: int
+    daily_budget: int
+    transactions_seen: int
+    transactions_added: int
+    opening_balances_written: int
+    stopped_reason: str | None = None
+    state_path: str | None = None
+    errors: list[str]
+    warnings: list[str]
+
+
+@app.post("/backfill/plan", response_model=BackfillResponse)
+def backfill_plan(req: BackfillRequest) -> BackfillResponse:
+    """Show the windows a backfill would request. Spends nothing.
+
+    Not a nicety at ~24 requests a day (§3.1): this is how a caller sees what
+    a run will cost, and what a previous run already completed, *before*
+    committing any of the budget to it. It is a `POST` only because it takes
+    a body; it neither fetches nor writes -- not even the resume state file.
+
+    `ok: false` here means the plan does not fit in what is left of today's
+    budget, which is a real answer and not an error.
+    """
+    run_backfill = _module_callable("bookkeeper.ingest.backfill", "run_backfill")
+    result = run_backfill(
+        req.from_date,
+        req.to_date,
+        dry_run=True,
+        restart=req.restart,
+        max_requests=req.max_requests,
+        demo=req.demo,
+    )
+    return BackfillResponse(**result.to_dict())
+
+
+class BackfillStartResponse(BaseModel):
+    job_id: str
+    kind: str
+    state: str
+    #: False when a backfill was already running and this request was handed
+    #: that job instead of launching a second one against the same budget.
+    started: bool
+
+
+class BackfillStatusResponse(BaseModel):
+    job_id: str
+    kind: str
+    state: str
+    progress: int
+    total: int
+    step: str
+    result: BackfillResponse | None = None
+    error: str | None = None
+    started_at: float
+    finished_at: float | None = None
+    done: bool
+    summary: str
+
+
+def _backfill_job(req: BackfillRequest) -> Any:
+    """The unit of work behind `POST /backfill/start`.
+
+    A backfill is up to five sequential HTTP requests to a bank bridge, each
+    with a 30s timeout; running that inside a request handler would hold a
+    connection open for minutes. §5.3 rule 3 applies with room to spare.
+
+    A run that stops short -- budget exhausted, a window capped -- returns
+    its result rather than raising. That is not a failed job: it wrote real
+    transactions, it recorded where to resume, and `ok: false` with the
+    window table is precisely the payload the caller needs. Only an
+    exception is a failure.
+    """
+    run_backfill = _module_callable("bookkeeper.ingest.backfill", "run_backfill")
+
+    def work(progress: Any) -> dict[str, Any]:
+        progress.report(step="backfilling from SimpleFIN", progress=0, total=2)
+        result = run_backfill(
+            req.from_date,
+            req.to_date,
+            dry_run=False,
+            restart=req.restart,
+            max_requests=req.max_requests,
+            demo=req.demo,
+        )
+        # The backfill is the sole ledger writer here and has just appended
+        # to files the cache watches; force a reload rather than race mtime
+        # granularity, exactly as `_sync_job` does.
+        _ledger_cache.invalidate()
+        progress.report(step="ledger updated", progress=2)
+        return result.to_dict()
+
+    return work
+
+
+@app.post("/backfill/start", response_model=BackfillStartResponse)
+def backfill_start(req: BackfillRequest) -> BackfillStartResponse:
+    """Kick off a backfill and return immediately with its job id.
+
+    Refuses while a sync is running. The two are different job kinds, so the
+    registry's own single-flighting would not catch it, and they draw on one
+    shared budget of ~24 requests a day (§3.1) -- a sync racing a five-window
+    backfill is a fifth of the day spent on a collision nobody asked for.
+    """
+    jobs = _import_optional("bookkeeper.jobs")
+    if jobs.registry.active(SYNC_JOB_KIND) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="a sync is already running; both spend from the same SimpleFIN daily "
+            "request budget, so the backfill was not started",
+        )
+    snapshot, started = jobs.registry.start(BACKFILL_JOB_KIND, _backfill_job(req), total=2)
+    return BackfillStartResponse(
+        job_id=snapshot.job_id,
+        kind=snapshot.kind,
+        state=snapshot.state.value,
+        started=started,
+    )
+
+
+@app.get("/backfill/status/{job_id}", response_model=BackfillStatusResponse)
+def backfill_status(job_id: str) -> BackfillStatusResponse:
+    """Where a backfill job has got to. Cheap enough to poll."""
+    jobs = _import_optional("bookkeeper.jobs")
+    snapshot = jobs.registry.get(job_id)
+    if snapshot is None or snapshot.kind != BACKFILL_JOB_KIND:
+        raise HTTPException(status_code=404, detail=f"no backfill job with id {job_id!r}")
+    return BackfillStatusResponse(
+        job_id=snapshot.job_id,
+        kind=snapshot.kind,
+        state=snapshot.state.value,
+        progress=snapshot.progress,
+        total=snapshot.total,
+        step=snapshot.step,
+        result=None if snapshot.result is None else BackfillResponse(**snapshot.result),
+        error=snapshot.error,
+        started_at=snapshot.started_at,
+        finished_at=snapshot.finished_at,
+        done=snapshot.done,
+        summary=snapshot.render(),
+    )
+
+
+# --------------------------------------------------------------------------
 # Allocation -- the one write tool the chat layer exposes
 # --------------------------------------------------------------------------
 
@@ -1595,6 +1801,232 @@ def reports_trends(
         outlier_threshold=report.outlier_threshold,
         errors=list(report.errors),
         warnings=list(report.warnings),
+    )
+
+
+class StatementLineModel(BaseModel):
+    """One transaction as the bank recorded it.
+
+    `amount` is a `Decimal` (a JSON *string* on the wire) in the ledger's own
+    sign convention: negative is money leaving the account. A browser cannot
+    do decimal arithmetic and must not try, so this is the one place a caller
+    has to get the sign right -- and `POST /reconcile` says so when a whole
+    payload looks inverted rather than silently negating it.
+    """
+
+    posted_date: date
+    amount: Decimal
+    description: str = ""
+    #: Row in the source file, when there was one. Zero for lines assembled by
+    #: a caller, which is honest: there is no row to send anyone to.
+    row: int = 0
+
+
+class ReconcileRequest(StrictRequest):
+    """A statement to check the ledger against.
+
+    Every field but `account` is optional, and the useful combinations are all
+    of them. The minimum -- `closing_balance` + `closing_date`, no lines -- is
+    the case a user can always supply ("on this date my balance was X"), and
+    it still comes back with candidate transactions rather than a scalar.
+
+    `lines` is the API's equivalent of the CLI's `--statement file.csv`: the
+    sidecar deliberately does *not* accept a filesystem path from the browser
+    side, since the Next.js layer never touches the user's disk on the
+    sidecar's behalf (§9). The CSV parser lives in `reconcile.statement` and
+    serves the CLI; over HTTP a caller sends the parsed lines.
+    """
+
+    account: str
+    closing_date: date | None = None
+    closing_balance: Decimal | None = None
+    lines: list[StatementLineModel] = []
+    from_date: date | None = None
+    count: int | None = None
+    #: Imported rather than restated so the HTTP default and the CLI default
+    #: cannot drift apart -- §9's CLI parity is a property to keep, not a
+    #: claim to make once.
+    window: int = MATCH_WINDOW_DAYS
+    source: str = "api"
+
+
+class LedgerEntryModel(BaseModel):
+    """A ledger posting implicated in a finding.
+
+    `location` is `file:line`. It is the field that makes a finding
+    actionable: a UI can print it and a user can open it, which is the
+    difference between "there is a duplicate somewhere" and a fix.
+    """
+
+    date: date
+    amount: Decimal
+    description: str
+    simplefin_id: str | None = None
+    location: str
+
+
+class FindingModel(BaseModel):
+    """One thing that is, or might be, wrong.
+
+    `delta` is this finding's share of `statement - ledger`. `confirmed`
+    separates observed from inferred, and a client must render the two
+    differently: confirmed findings are components that sum to `explained`,
+    unconfirmed ones are alternatives to each other and summing them is
+    meaningless. Collapsing the distinction in a UI would present a guess with
+    the authority of a measurement.
+    """
+
+    kind: str
+    delta: Decimal
+    explanation: str
+    confirmed: bool
+    ledger_entries: list[LedgerEntryModel]
+    statement_lines: list[StatementLineModel]
+
+
+class ReconcileResponse(BaseModel):
+    ok: bool
+    summary: str
+    account: str
+    currency: str
+    source: str
+    closing_date: date | None = None
+    #: `closing_date + 1 day` -- the beancount `balance` directive that
+    #: asserts the same instant, since a directive dated D asserts the balance
+    #: at the *start* of D. Returned rather than left to the client to derive:
+    #: a UI that recomputed it would be reimplementing the subtlety this
+    #: codebase already got right once, in `normalize.NormalizedBalance`.
+    assertion_date: date | None = None
+    statement_balance: Decimal | None = None
+    ledger_balance: Decimal | None = None
+    delta: Decimal | None = None
+    explained: Decimal
+    residual: Decimal
+    reconciled: bool
+    from_date: date | None = None
+    to_date: date | None = None
+    statement_lines: int
+    ledger_entries: int
+    matched: int
+    findings: list[FindingModel]
+    notes: list[str]
+    errors: list[str]
+
+
+@app.post("/reconcile", response_model=ReconcileResponse)
+def reconcile(req: ReconcileRequest) -> ReconcileResponse:
+    """Check one account against a bank statement (PLAN.md §5.2 item 3).
+
+    POST rather than GET because a statement is a body, not a query string.
+
+    A *discrepancy* is a 200 with `ok: false`, not an error status: the client
+    asked a question and got the answer, and the answer is where the books
+    disagree with the bank. Only a request that cannot be answered at all --
+    an unknown or ambiguous account, a statement in the wrong currency, a
+    balance with no date -- is a 422, because there is no reconciliation to
+    return.
+
+    Deliberately does not 500 on a ledger that failed to load, unlike
+    `/reports/month-end`. The likeliest reason this ledger has errors is a
+    *failing balance assertion*, which is the exact condition someone reaches
+    for reconciliation to diagnose; refusing then would withhold the tool at
+    the moment it is wanted. The load errors come back as a note instead.
+    """
+    from bookkeeper.reconcile.compare import ReconcileError, reconcile_entries
+    from bookkeeper.reconcile.statement import Statement, StatementError, StatementLine
+
+    if req.closing_balance is not None and req.closing_date is None:
+        raise HTTPException(
+            status_code=422,
+            detail="closing_balance needs closing_date: a balance with no date "
+            "cannot be compared against anything",
+        )
+    if req.closing_balance is None and not req.lines:
+        raise HTTPException(
+            status_code=422,
+            detail="nothing to reconcile against: send a closing_balance (with a "
+            "closing_date) or some lines, or both",
+        )
+
+    entries, errors, options = _ledger_cache.get()
+    statement = Statement(
+        account=req.account,
+        closing_date=req.closing_date,
+        closing_balance=req.closing_balance,
+        lines=tuple(
+            StatementLine(
+                posted_date=line.posted_date,
+                amount=line.amount,
+                description=line.description or "(no description)",
+                row=line.row,
+            )
+            for line in req.lines
+        ),
+        from_date=req.from_date,
+        count=req.count,
+        source=req.source,
+    )
+    try:
+        result = reconcile_entries(
+            entries, statement, tolerance=req.window, options=options
+        )
+    except (ReconcileError, StatementError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if errors:
+        result.notes.append(
+            f"the ledger loaded with {len(errors)} error(s), so these figures may be "
+            "built on an incomplete parse — see /verify"
+        )
+    return ReconcileResponse(
+        ok=result.ok,
+        summary=result.render(),
+        account=result.account,
+        currency=result.currency,
+        source=result.source,
+        closing_date=result.closing_date,
+        assertion_date=result.assertion_date,
+        statement_balance=result.statement_balance,
+        ledger_balance=result.ledger_balance,
+        delta=result.delta,
+        explained=result.explained,
+        residual=result.residual,
+        reconciled=result.reconciled,
+        from_date=result.from_date,
+        to_date=result.to_date,
+        statement_lines=result.statement_lines,
+        ledger_entries=result.ledger_entries,
+        matched=result.matched,
+        findings=[
+            FindingModel(
+                kind=f.kind,
+                delta=f.delta,
+                explanation=f.explanation,
+                confirmed=f.confirmed,
+                ledger_entries=[
+                    LedgerEntryModel(
+                        date=e.date,
+                        amount=e.amount,
+                        description=e.description,
+                        simplefin_id=e.simplefin_id,
+                        location=e.location,
+                    )
+                    for e in f.ledger_entries
+                ],
+                statement_lines=[
+                    StatementLineModel(
+                        posted_date=line.posted_date,
+                        amount=line.amount,
+                        description=line.description,
+                        row=line.row,
+                    )
+                    for line in f.statement_lines
+                ],
+            )
+            for f in result.findings
+        ],
+        notes=list(result.notes),
+        errors=list(result.errors),
     )
 
 

@@ -6,6 +6,10 @@ data/secrets/
 data/raw/
 data/eval/
 
+# Backfill resume state: per-run progress, machine-written after every
+# window (bookkeeper/ingest/backfill.py). Operational, not a ledger artifact.
+data/backfill/
+
 # Python
 .venv/
 __pycache__/
