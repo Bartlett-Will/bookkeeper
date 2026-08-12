@@ -294,9 +294,20 @@ unenforced — run only by whoever remembered to run `uv run pytest`.
 The workflow runs the three gate tests **by explicit node id, as their own
 named step, before the rest of the suite**, so a §5.5 regression shows up as a
 red step called "Accuracy regression gate (PLAN.md 5.5)" rather than as one
-failure among ~590 dots. Node ids rather than `-k`, because a `-k` expression
-that no longer matches anything selects zero tests and exits green; a stale
-node id exits non-zero. On failure the workflow writes the three possible
+failure among ~590 dots.
+
+Node ids rather than `-k`. The original reasoning given here was that a `-k`
+expression matching nothing "selects zero tests and exits green" — **that is
+wrong, and measured to be wrong**: on this pytest a `-k` matching nothing
+exits **5** (no tests collected) and a stale node id exits **4** (usage
+error). Both fail the build, so the gate could not have gone quiet either
+way. Node ids are still the better choice — exit 4 names a broken selector
+where exit 5 only says nothing ran, and a node id states which three tests are
+the gate rather than leaving it to a pattern — but the justification was
+overstated and is corrected here rather than left as a claim a reader would
+find false the first time they checked it.
+
+On failure the workflow writes the three possible
 causes to the job summary, including the rule that the 0.85 floor is lowered
 by recording a reason in this document rather than by editing the constant.
 
