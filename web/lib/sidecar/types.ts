@@ -282,6 +282,79 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/backfill/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Backfill Plan
+         * @description Show the windows a backfill would request. Spends nothing.
+         *
+         *     Not a nicety at ~24 requests a day (§3.1): this is how a caller sees what
+         *     a run will cost, and what a previous run already completed, *before*
+         *     committing any of the budget to it. It is a `POST` only because it takes
+         *     a body; it neither fetches nor writes -- not even the resume state file.
+         *
+         *     `ok: false` here means the plan does not fit in what is left of today's
+         *     budget, which is a real answer and not an error.
+         */
+        post: operations["backfill_plan_backfill_plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backfill/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Backfill Start
+         * @description Kick off a backfill and return immediately with its job id.
+         *
+         *     Refuses while a sync is running. The two are different job kinds, so the
+         *     registry's own single-flighting would not catch it, and they draw on one
+         *     shared budget of ~24 requests a day (§3.1) -- a sync racing a five-window
+         *     backfill is a fifth of the day spent on a collision nobody asked for.
+         */
+        post: operations["backfill_start_backfill_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backfill/status/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Backfill Status
+         * @description Where a backfill job has got to. Cheap enough to poll.
+         */
+        get: operations["backfill_status_backfill_status__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/envelopes/allocate": {
         parameters: {
             query?: never;
@@ -457,6 +530,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reconcile
+         * @description Check one account against a bank statement (PLAN.md §5.2 item 3).
+         *
+         *     POST rather than GET because a statement is a body, not a query string.
+         *
+         *     A *discrepancy* is a 200 with `ok: false`, not an error status: the client
+         *     asked a question and got the answer, and the answer is where the books
+         *     disagree with the bank. Only a request that cannot be answered at all --
+         *     an unknown or ambiguous account, a statement in the wrong currency, a
+         *     balance with no date -- is a 422, because there is no reconciliation to
+         *     return.
+         *
+         *     Deliberately does not 500 on a ledger that failed to load, unlike
+         *     `/reports/month-end`. The likeliest reason this ledger has errors is a
+         *     *failing balance assertion*, which is the exact condition someone reaches
+         *     for reconciliation to diagnose; refusing then would withhold the tool at
+         *     the moment it is wanted. The load errors come back as a note instead.
+         */
+        post: operations["reconcile_reconcile_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -540,6 +648,151 @@ export interface components {
              * @default default
              */
             source: string;
+        };
+        /** BackfillRequest */
+        BackfillRequest: {
+            /** From Date */
+            from_date: string;
+            /** To Date */
+            to_date?: string | null;
+            /** Max Requests */
+            max_requests?: number | null;
+            /**
+             * Restart
+             * @default false
+             */
+            restart: boolean;
+            /**
+             * Demo
+             * @default false
+             */
+            demo: boolean;
+        };
+        /**
+         * BackfillResponse
+         * @description One backfill run or preview, with all three date ranges kept apart.
+         *
+         *     `requested_*`, `honoured_*` and `data_*` are three different facts and
+         *     the browser must not compute any of them from the others -- a window the
+         *     server capped honoured less than it was asked for, and an account that
+         *     was quiet spans less than was honoured. Field-for-field
+         *     `BackfillResult.to_dict()`, which is also the job payload below.
+         */
+        BackfillResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Summary */
+            summary: string;
+            /** Dry Run */
+            dry_run: boolean;
+            /** Complete */
+            complete: boolean;
+            /** Requested From */
+            requested_from?: string | null;
+            /** Requested To */
+            requested_to?: string | null;
+            /** Honoured From */
+            honoured_from?: string | null;
+            /** Honoured Through */
+            honoured_through?: string | null;
+            /** Data From */
+            data_from?: string | null;
+            /** Data Through */
+            data_through?: string | null;
+            /** Windows */
+            windows: components["schemas"]["BackfillWindowModel"][];
+            /** Requests Made */
+            requests_made: number;
+            /** Requests Planned */
+            requests_planned: number;
+            /** Requests Used Today */
+            requests_used_today: number;
+            /** Requests Remaining Today */
+            requests_remaining_today: number;
+            /** Daily Budget */
+            daily_budget: number;
+            /** Transactions Seen */
+            transactions_seen: number;
+            /** Transactions Added */
+            transactions_added: number;
+            /** Opening Balances Written */
+            opening_balances_written: number;
+            /** Stopped Reason */
+            stopped_reason?: string | null;
+            /** State Path */
+            state_path?: string | null;
+            /** Errors */
+            errors: string[];
+            /** Warnings */
+            warnings: string[];
+        };
+        /** BackfillStartResponse */
+        BackfillStartResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Kind */
+            kind: string;
+            /** State */
+            state: string;
+            /** Started */
+            started: boolean;
+        };
+        /** BackfillStatusResponse */
+        BackfillStatusResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Kind */
+            kind: string;
+            /** State */
+            state: string;
+            /** Progress */
+            progress: number;
+            /** Total */
+            total: number;
+            /** Step */
+            step: string;
+            result?: components["schemas"]["BackfillResponse"] | null;
+            /** Error */
+            error?: string | null;
+            /** Started At */
+            started_at: number;
+            /** Finished At */
+            finished_at?: number | null;
+            /** Done */
+            done: boolean;
+            /** Summary */
+            summary: string;
+        };
+        /** BackfillWindowModel */
+        BackfillWindowModel: {
+            /** Index */
+            index: number;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Days */
+            days: number;
+            /** State */
+            state: string;
+            /** Requests */
+            requests: number;
+            /** Transactions Seen */
+            transactions_seen: number;
+            /** Transactions Added */
+            transactions_added: number;
+            /** Data From */
+            data_from?: string | null;
+            /** Data Through */
+            data_through?: string | null;
+            /** Errors */
+            errors: string[];
         };
         /**
          * BudgetLineModel
@@ -878,6 +1131,31 @@ export interface components {
             /** Points */
             points: components["schemas"]["SpendPointModel"][];
         };
+        /**
+         * FindingModel
+         * @description One thing that is, or might be, wrong.
+         *
+         *     `delta` is this finding's share of `statement - ledger`. `confirmed`
+         *     separates observed from inferred, and a client must render the two
+         *     differently: confirmed findings are components that sum to `explained`,
+         *     unconfirmed ones are alternatives to each other and summing them is
+         *     meaningless. Collapsing the distinction in a UI would present a guess with
+         *     the authority of a measurement.
+         */
+        FindingModel: {
+            /** Kind */
+            kind: string;
+            /** Delta */
+            delta: string;
+            /** Explanation */
+            explanation: string;
+            /** Confirmed */
+            confirmed: boolean;
+            /** Ledger Entries */
+            ledger_entries: components["schemas"]["LedgerEntryModel"][];
+            /** Statement Lines */
+            statement_lines: components["schemas"]["StatementLineModel-Output"][];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -898,6 +1176,29 @@ export interface components {
             account: string;
             /** Balance */
             balance: components["schemas"]["AccountPositionModel"][];
+        };
+        /**
+         * LedgerEntryModel
+         * @description A ledger posting implicated in a finding.
+         *
+         *     `location` is `file:line`. It is the field that makes a finding
+         *     actionable: a UI can print it and a user can open it, which is the
+         *     difference between "there is a duplicate somewhere" and a fix.
+         */
+        LedgerEntryModel: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Amount */
+            amount: string;
+            /** Description */
+            description: string;
+            /** Simplefin Id */
+            simplefin_id?: string | null;
+            /** Location */
+            location: string;
         };
         /**
          * MonthEndEnvelopeModel
@@ -1128,6 +1429,93 @@ export interface components {
             threshold: string;
         };
         /**
+         * ReconcileRequest
+         * @description A statement to check the ledger against.
+         *
+         *     Every field but `account` is optional, and the useful combinations are all
+         *     of them. The minimum -- `closing_balance` + `closing_date`, no lines -- is
+         *     the case a user can always supply ("on this date my balance was X"), and
+         *     it still comes back with candidate transactions rather than a scalar.
+         *
+         *     `lines` is the API's equivalent of the CLI's `--statement file.csv`: the
+         *     sidecar deliberately does *not* accept a filesystem path from the browser
+         *     side, since the Next.js layer never touches the user's disk on the
+         *     sidecar's behalf (§9). The CSV parser lives in `reconcile.statement` and
+         *     serves the CLI; over HTTP a caller sends the parsed lines.
+         */
+        ReconcileRequest: {
+            /** Account */
+            account: string;
+            /** Closing Date */
+            closing_date?: string | null;
+            /** Closing Balance */
+            closing_balance?: number | string | null;
+            /**
+             * Lines
+             * @default []
+             */
+            lines: components["schemas"]["StatementLineModel-Input"][];
+            /** From Date */
+            from_date?: string | null;
+            /** Count */
+            count?: number | null;
+            /**
+             * Window
+             * @default 3
+             */
+            window: number;
+            /**
+             * Source
+             * @default api
+             */
+            source: string;
+        };
+        /** ReconcileResponse */
+        ReconcileResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Summary */
+            summary: string;
+            /** Account */
+            account: string;
+            /** Currency */
+            currency: string;
+            /** Source */
+            source: string;
+            /** Closing Date */
+            closing_date?: string | null;
+            /** Assertion Date */
+            assertion_date?: string | null;
+            /** Statement Balance */
+            statement_balance?: string | null;
+            /** Ledger Balance */
+            ledger_balance?: string | null;
+            /** Delta */
+            delta?: string | null;
+            /** Explained */
+            explained: string;
+            /** Residual */
+            residual: string;
+            /** Reconciled */
+            reconciled: boolean;
+            /** From Date */
+            from_date?: string | null;
+            /** To Date */
+            to_date?: string | null;
+            /** Statement Lines */
+            statement_lines: number;
+            /** Ledger Entries */
+            ledger_entries: number;
+            /** Matched */
+            matched: number;
+            /** Findings */
+            findings: components["schemas"]["FindingModel"][];
+            /** Notes */
+            notes: string[];
+            /** Errors */
+            errors: string[];
+        };
+        /**
          * ReviewEntryModel
          * @description One transaction awaiting a decision, mirroring `review.ReviewEntry`.
          *
@@ -1234,6 +1622,64 @@ export interface components {
             errors: string[];
             /** Warnings */
             warnings: string[];
+        };
+        /**
+         * StatementLineModel
+         * @description One transaction as the bank recorded it.
+         *
+         *     `amount` is a `Decimal` (a JSON *string* on the wire) in the ledger's own
+         *     sign convention: negative is money leaving the account. A browser cannot
+         *     do decimal arithmetic and must not try, so this is the one place a caller
+         *     has to get the sign right -- and `POST /reconcile` says so when a whole
+         *     payload looks inverted rather than silently negating it.
+         */
+        "StatementLineModel-Input": {
+            /**
+             * Posted Date
+             * Format: date
+             */
+            posted_date: string;
+            /** Amount */
+            amount: number | string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Row
+             * @default 0
+             */
+            row: number;
+        };
+        /**
+         * StatementLineModel
+         * @description One transaction as the bank recorded it.
+         *
+         *     `amount` is a `Decimal` (a JSON *string* on the wire) in the ledger's own
+         *     sign convention: negative is money leaving the account. A browser cannot
+         *     do decimal arithmetic and must not try, so this is the one place a caller
+         *     has to get the sign right -- and `POST /reconcile` says so when a whole
+         *     payload looks inverted rather than silently negating it.
+         */
+        "StatementLineModel-Output": {
+            /**
+             * Posted Date
+             * Format: date
+             */
+            posted_date: string;
+            /** Amount */
+            amount: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Row
+             * @default 0
+             */
+            row: number;
         };
         /**
          * SyncJobResult
@@ -1766,6 +2212,103 @@ export interface operations {
             };
         };
     };
+    backfill_plan_backfill_plan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackfillRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    backfill_start_backfill_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackfillRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    backfill_status_backfill_status__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     envelopes_allocate_envelopes_allocate_post: {
         parameters: {
             query?: never;
@@ -1946,6 +2489,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrendsReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconcile_reconcile_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReconcileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconcileResponse"];
                 };
             };
             /** @description Validation Error */
