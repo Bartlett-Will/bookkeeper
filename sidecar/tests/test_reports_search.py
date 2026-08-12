@@ -548,11 +548,23 @@ def test_a_transfer_between_your_own_accounts_is_excluded_and_named(totals_ledge
 
 def test_a_transfer_is_still_a_match_even_though_it_is_in_no_total(totals_ledger):
     """Excluded from the figures, not hidden from the results: the user
-    searched for it and it happened."""
+    searched for it and it happened.
+
+    Counted **once**. A transfer has two funding legs, so `#postings` yields a
+    row for each, and this asserted 2 for a query matching a single
+    transaction — the name says "a transfer" and the number said two. The card
+    was rendering the payment twice, at -500 and +500, directly above a totals
+    block that correctly reported it once as excluded.
+    """
     result = search(totals_ledger, "card payment")
 
-    assert result.total == 2
+    assert result.total == 1
+    assert len(result.matches) == 1
     assert totals_by_currency(result)["USD"].spent == Decimal(0)
+    # The money side was always right and must stay right: the totals need to
+    # see *both* legs to recognise a transfer at all, so deduping the rows the
+    # user sees must not dedupe what `_amount_totals` is given.
+    assert totals_by_currency(result)["USD"].transferred > Decimal(0)
 
 
 def test_currencies_are_totalled_separately_and_never_added(totals_ledger):

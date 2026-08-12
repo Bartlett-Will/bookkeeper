@@ -95,6 +95,7 @@ _FUNDING_ACCOUNT_PATTERN = "^(" + "|".join(p.rstrip(":") for p in _FUNDING_PREFI
 #: Constant query text. The only variable parts are bound parameters.
 _SEARCH_QUERY = """
 SELECT
+    id,
     date,
     narration,
     payee,
@@ -471,8 +472,29 @@ def search_transactions(
     columns = [d.name for d in cursor.description]
     rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 
+    # One transaction, not one posting. `#postings` yields a row per matching
+    # funding leg, and a transfer has two of them -- a card payment came back
+    # as two rows, once at -500.00 and once at +500.00, and `total` counted it
+    # twice. `_is_transfer` already keeps that from double-counting the *money*
+    # (it is excluded from spend and receipt totals), but the count and the
+    # rendered rows never got the same treatment, so the card showed the
+    # payment twice while the totals block below it correctly said "excluded
+    # 500.00" -- two halves of one response contradicting each other.
+    #
+    # `id` is beanquery's entry identity, so both legs of one transaction carry
+    # the same value. Deduping on it is exact, where a date-and-narration key
+    # would collapse two genuinely distinct identical charges on one day.
+    seen_entries: set[str] = set()
+    distinct: list[dict[str, Any]] = []
+    for row in rows:
+        entry_id = row["id"]
+        if entry_id in seen_entries:
+            continue
+        seen_entries.add(entry_id)
+        distinct.append(row)
+
     matches = []
-    for row in rows[:resolved_limit]:
+    for row in distinct[:resolved_limit]:
         categorized = _first_other_account(row["other_accounts"])
         matches.append(
             TransactionMatch(
@@ -505,9 +527,9 @@ def search_transactions(
         ok=True,
         query=text,
         matches=matches,
-        total=len(rows),
+        total=len(distinct),
         amount_totals=list(totals),
         limit=resolved_limit,
-        truncated=len(rows) > resolved_limit,
+        truncated=len(distinct) > resolved_limit,
         warnings=warnings,
     )
