@@ -867,13 +867,29 @@ def month_end_report(
     )
     if not trends.ok:
         warnings.extend(f"trends unavailable: {e}" for e in trends.errors)
+    # `trends` narrows its own window to the ledger's span and says so. Those
+    # warnings were being dropped, so a report over a period the ledger does
+    # not cover carried no signal at all.
+    warnings.extend(getattr(trends, "warnings", ()))
 
     outliers = tuple(
         o for o in getattr(trends, "outliers", ()) if month_start <= o.posted_date <= month_end
     )
-    unjudged = tuple(
-        sorted(a.envelope for a in getattr(trends, "assessments", ()) if not a.judged)
-    )
+    assessments = tuple(getattr(trends, "assessments", ()))
+    if assessments:
+        unjudged = tuple(sorted(a.envelope for a in assessments if not a.judged))
+    else:
+        # No assessments means nothing was examined, never that everything
+        # passed. `trends` returns `ok=True` with empty assessments when the
+        # requested window lies wholly outside the ledger, and reading that as
+        # "zero envelopes unjudged" made the report say "no unusual
+        # transactions among the N envelopes with enough history to judge"
+        # about a month it had not looked at -- then handed that to the model
+        # as a fact via `sayableFacts`, which gates on
+        # `unjudged.length < envelopes.length`. An absence has to withhold the
+        # reassurance rather than manufacture it, the same reading the web
+        # layer already applies to a missing `unjudged`.
+        unjudged = tuple(sorted(e.name for e in budget.envelopes))
 
     # `budget.ok` means the mapping already parsed, so this cannot raise here;
     # it is re-read rather than passed through because `BudgetReport` does not

@@ -14,7 +14,7 @@ asked to apply, mirroring the CLI's `--apply` flag, because an endpoint that
 rewrites the ledger by default is PLAN.md §7's top risk.
 
 Every response is a declared pydantic model, not a bare `dict[str, Any]`.
-That is not tidiness: `worker-2` generates the browser's TypeScript from
+That is not tidiness: the web client generates its TypeScript from
 `/openapi.json`, so a field that is untyped here is `unknown` there, and the
 "typed contract, checked end to end" of §5.1 stops being a property and
 becomes a claim. `Decimal` is left as `Decimal` throughout -- pydantic
@@ -249,7 +249,7 @@ def accounts() -> AccountsResponse:
             accounts=[],
             note=(
                 "ledger/main.beancount not found -- accounts.beancount include "
-                "wiring is owned by worker-2 and may not be in place yet"
+                "include wiring may not be in place yet"
             ),
         )
     if errors:
@@ -262,7 +262,7 @@ def accounts() -> AccountsResponse:
     result = []
     for real_account in realization.iter_children(real_root):
         # Every SimpleFIN-derived account lives directly under Assets: in
-        # the current ledger/accounts.beancount convention (worker-2's
+        # the current ledger/accounts.beancount convention (that
         # file) -- there's no separate namespace to filter on. This will
         # over-include if a manually-added, non-SimpleFIN Assets account
         # is ever opened; acceptable for Phase 1's demo-only scope.

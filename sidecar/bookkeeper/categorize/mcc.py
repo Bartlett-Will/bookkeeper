@@ -12,7 +12,7 @@ abstains rather than inventing or guessing an account.
 Confidence is deliberately below 1.0 and varies by code: MCC itself is
 undocumented and unguaranteed by any real institution (§3.1), and the demo
 bridge has been observed mislabeling merchants outright -- a bait-and-tackle
-shop tagged 5812, *Eating Places* (team-lead, 2026-07-30) -- so restaurant
+shop tagged 5812, *Eating Places* (observed live, 2026-07-30) -- so restaurant
 codes in particular are trusted less than e.g. gas or pharmacy, which tend
 to be assigned more consistently in real-world MCC data.
 """

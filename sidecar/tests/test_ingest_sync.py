@@ -397,8 +397,8 @@ def test_sync_opening_balance_for_account_with_no_transactions_in_window(
 
 
 def test_sync_writes_accounts_simplefin_open_directives(bookkeeper_root, httpx_mock):
-    # Ingest owns opening SimpleFIN accounts (team-lead decision,
-    # 2026-07-30): worker-2's accounts.beancount must never need a
+    # Ingest owns opening SimpleFIN accounts (decided 2026-07-30):
+    # accounts.beancount must never need a
     # hand-added `open` line for a bank account again.
     _seed_access_url(bookkeeper_root)
     httpx_mock.add_response(url=ACCESS_URL + "/accounts", method="GET", json=SAMPLE_PAYLOAD)
@@ -473,7 +473,7 @@ def test_sync_hard_fails_on_asset_account_name_collision(bookkeeper_root, httpx_
 
 
 def test_clean_rebuild_matches_a_resync_byte_for_byte(bookkeeper_root, httpx_mock):
-    # Regression test for a real bug (team-lead, 2026-07-30): the
+    # Regression test for a real bug (found 2026-07-30): the
     # idempotency proof above only shows re-sync-on-top-of-existing-state
     # is a no-op. It does NOT show a from-nothing rebuild produces the same
     # bytes -- balances.beancount used to merge into whatever the file

@@ -8,7 +8,7 @@ code.
 As of 2026-07-30 this fails: bridge.simplefin.org 302-redirects the claim
 endpoint to a bare beta-bridge.simplefin.org *root*, dropping the request
 path entirely, so the documented claim flow (simplefin.org/protocol.html)
-cannot currently complete against the live host -- reported to team-lead
+cannot currently complete against the live host -- reported
 as a discrepancy between docs and the live demo bridge, not a bug in
 `claim_token`/`fetch_accounts`. `test_simplefin_claim.py` pins the exact
 observed live behavior (a 302 to a path-less root) as a mocked contract

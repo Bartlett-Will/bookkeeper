@@ -67,7 +67,7 @@ SAVINGS = "Assets:SimpleFIN:Savings"
 
 
 class FakeCascade:
-    """Stands in for worker-1's cascade: a fixed answer per transaction id."""
+    """Stands in for the cascade: a fixed answer per transaction id."""
 
     def __init__(self, predictions: dict[str, Prediction | None]) -> None:
         self._predictions = predictions

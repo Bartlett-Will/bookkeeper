@@ -107,7 +107,7 @@ def test_account_set_parses_pending_flag_and_defaults():
 
 def test_transaction_accepts_live_demo_fields_not_in_the_spec():
     # mcc/payee/memo: confirmed present on the live demo server
-    # (team-lead, 2026-07-30) despite not appearing in
+    # (observed live, 2026-07-30) despite not appearing in
     # simplefin.org/protocol.html. Must not be rejected by extra="forbid".
     txn = Transaction.model_validate(
         {

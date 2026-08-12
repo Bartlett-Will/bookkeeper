@@ -26,7 +26,7 @@ class NormalizedTransaction:
     description: str
     asset_account: str
     # Not part of the documented protocol, but observed on the live demo
-    # server (team-lead, 2026-07-30). Optional everywhere downstream --
+    # server (observed live, 2026-07-30). Optional everywhere downstream --
     # never required by ingest, since a real bank feed may send none of
     # them. Persisted as metadata when present (free signal for Phase 3).
     mcc: str | None = None
@@ -62,7 +62,7 @@ class OpeningBalance:
     this reproduces on the real demo server's Checking/Savings accounts,
     which have months of history behind any single fetch.
 
-    worker-2 already opened `Equity:Opening-Balances` in
+    `Equity:Opening-Balances` is already opened in
     ledger/accounts.beancount anticipating exactly this.
     """
 
@@ -79,7 +79,7 @@ def _sanitize_leaf(name: str) -> str:
     # Live demo account names come back branded, e.g. "SimpleFIN Savings",
     # "SimpleFIN Checking", "SimpleFIN Empty Account" (confirmed live,
     # 2026-07-30) -- strip that prefix so the leaf is "Savings"/"Checking"/
-    # "EmptyAccount", matching worker-2's accounts.beancount convention.
+    # "EmptyAccount", matching accounts.beancount's convention.
     # A no-op for real (Phase 6) bank accounts, which won't be branded this
     # way.
     name = _DEMO_BRAND_PREFIX_RE.sub("", name)
@@ -104,9 +104,9 @@ ASSET_ACCOUNT_OPEN_DATE = date(2000, 1, 1)
 def simplefin_asset_account(account: Account) -> str:
     """Deterministic `Assets:SimpleFIN:<Name>` account name.
 
-    Namespaced under `Assets:SimpleFIN:` (team-lead decision, 2026-07-30,
+    Namespaced under `Assets:SimpleFIN:` (decided 2026-07-30,
     superseding an earlier flat `Assets:<Name>` scheme this function used
-    briefly to match worker-2's hand-curated accounts.beancount): flat
+    briefly to match the hand-curated accounts.beancount): flat
     names require a human to pre-open one ledger account per bank account
     and collapse the moment two different banks both have a "Checking".
     `bookkeeper.ingest` now owns opening these accounts itself, into

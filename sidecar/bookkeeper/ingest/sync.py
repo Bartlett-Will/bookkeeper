@@ -195,7 +195,7 @@ def run_sync(
     try:
         # Aborts the whole sync -- no partial write -- if two different
         # SimpleFIN accounts would sanitize to the same Assets:SimpleFIN:*
-        # name (team-lead decision, 2026-07-30: hard-fail, don't silently
+        # name (decided 2026-07-30: hard-fail, don't silently
         # merge or uglify the common case with an id suffix).
         check_no_asset_account_collisions(account_set.accounts)
     except Exception as exc:  # noqa: BLE001
@@ -204,7 +204,7 @@ def run_sync(
     # Ingest owns opening these accounts: rewrite accounts-simplefin.beancount
     # wholesale from whatever SimpleFIN currently reports, sorted and dated
     # with a fixed sentinel so the file is byte-identical across reruns with
-    # no new accounts (worker-2's accounts.beancount never hand-opens one of
+    # no new accounts (accounts.beancount never hand-opens one of
     # these again).
     asset_accounts_path = paths.accounts_simplefin_ledger()
     asset_accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -275,7 +275,7 @@ def run_sync(
         with year_path.open("a", encoding="utf-8") as f:
             f.write(block)
 
-    # Wholesale, not merged (team-lead finding, 2026-07-30): a merge-append
+    # Wholesale, not merged (found 2026-07-30): a merge-append
     # here let a closed account's assertion survive forever after the
     # account stopped being reported, permanently failing bean-check
     # against data that no longer exists. balances.beancount is the

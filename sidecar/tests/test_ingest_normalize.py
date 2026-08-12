@@ -51,7 +51,7 @@ PAYLOAD = {
 
 
 def test_simplefin_asset_account_is_deterministic_and_namespaced():
-    # Namespaced under Assets:SimpleFIN: (team-lead decision, 2026-07-30):
+    # Namespaced under Assets:SimpleFIN: (decided 2026-07-30):
     # ingest owns opening these accounts itself (accounts-simplefin.beancount),
     # so accounts.beancount never has to hand-open one per bank connection.
     account_set = AccountSet.model_validate(PAYLOAD)

@@ -860,3 +860,25 @@ def test_ok_is_true_and_render_is_a_string_per_the_cli_contract(ledger):
 def test_month_bounds_covers_february_in_a_leap_year():
     assert month_bounds(2024, 2) == (date(2024, 2, 1), date(2024, 2, 29))
     assert month_bounds(2026, 2) == (date(2026, 2, 1), date(2026, 2, 28))
+
+
+def test_a_month_outside_the_ledger_withholds_the_all_clear(ledger):
+    """No assessments means nothing was examined, never that everything passed.
+
+    `trends` returns ok=True with empty assessments when the requested window
+    lies wholly outside the ledger. Reading that as "zero envelopes unjudged"
+    made the report claim "no unusual transactions this period among the N
+    envelope(s) with enough history to judge" about a month it had never
+    looked at -- and `sayableFacts` on the web side gates the model's
+    reassurance on `unjudged.length < envelopes.length`, so the 8B model was
+    handed that as a fact. An absence has to withhold a reassurance rather
+    than manufacture one.
+    """
+    result = report(ledger, "2015-03")
+
+    assert result.ok
+    assert result.envelopes, "fixture should still map envelopes"
+    assert len(result.unjudged) == len(result.envelopes)
+    assert "No unusual transactions" not in result.render()
+    assert result.warnings, "the window-narrowing warning must reach the report"
+

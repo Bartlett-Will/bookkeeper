@@ -514,7 +514,7 @@ def test_confirmation_feeds_the_real_memory_tier_end_to_end(ledger):
     """The seam most likely to rot: no stubbed normalizer, no stubbed recorder.
 
     Every other confirmation test injects fakes to stay isolated from
-    worker-1's modules. This one wires the real `normalize_description` and
+    their real modules. This one wires the real `normalize_description` and
     the real `MemoryCategorizer` together and checks the loop actually
     closes -- that after confirming, tier 1 predicts the same account for
     the same merchant string. That is PLAN.md §6 Phase 4's exit criterion

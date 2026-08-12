@@ -2,7 +2,7 @@
 
 Field set matches the *documented* protocol (simplefin.org/protocol.html)
 plus a small number of fields confirmed present on the live demo server
-that the spec doesn't mention (team-lead live-tested
+that the spec doesn't mention (live-tested
 `https://demo:demo@beta-bridge.simplefin.org/simplefin/accounts` on
 2026-07-30): `mcc`, `payee`, `memo` on transactions, and a plain
 `errors: list[str]` alongside the documented `errlist`. Those are modeled

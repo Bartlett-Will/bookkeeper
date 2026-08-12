@@ -278,7 +278,7 @@ def test_review_queue_endpoint_passes_the_queue_through(fake_categorize):
 def test_review_queue_response_is_typed_not_a_bare_dict():
     """The `queue` field must generate as a real TypeScript type.
 
-    `worker-2` derives the web layer's types from `/openapi.json`. A
+    The web layer derives its types from `/openapi.json`. A
     `dict[str, Any]` here becomes `{[key: string]: unknown}` there, and a
     typo in `simplefin_id` then confirms nothing while the UI reports
     success -- against the user's own financial records.

@@ -35,7 +35,7 @@ def accounts_simplefin_ledger() -> Path:
     Owned and rewritten wholesale by bookkeeper.ingest on every sync --
     accounts_ledger() above stays hand-curated for expense/envelope
     accounts only, so no one has to hand-open an account per bank
-    connection (team-lead decision, 2026-07-30).
+    connection (decided 2026-07-30).
     """
     return ledger_dir() / "accounts-simplefin.beancount"
 
