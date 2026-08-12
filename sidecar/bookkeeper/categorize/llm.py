@@ -91,8 +91,8 @@ _SYSTEM_PROMPT = (
     "transaction and a closed list of accounts. Choose the single account "
     "that best fits, and answer only with the requested JSON object.\n"
     "- The account must be one of the listed accounts, copied exactly.\n"
-    "- The examples are categorizations this user already confirmed. If the "
-    "transaction resembles one, follow it.\n"
+    "- The examples are prior categorizations recorded in this ledger. If "
+    "the transaction resembles one, follow it.\n"
     "- Bank descriptions are abbreviated and carry store numbers, terminal "
     "ids and processor prefixes. Categorize by the merchant, not the noise.\n"
     "- Report your own confidence between 0 and 1."
@@ -248,7 +248,7 @@ class LlmCategorizer:
         examples = self.nearest_examples(txn, ctx)
         if examples:
             blocks.append("")
-            blocks.append("Previously confirmed by this user (most similar last):")
+            blocks.append("Already categorized in this ledger (most similar last):")
             blocks.extend(
                 f"- {(example.description or example.normalized_description)!r}"
                 f" -> {example.account}"

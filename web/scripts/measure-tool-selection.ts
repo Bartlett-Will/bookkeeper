@@ -392,7 +392,12 @@ async function choose(
   model: ReturnType<typeof getLanguageModel>,
   tools: ReturnType<typeof bookkeeperTools>,
   prompt: string
-): Promise<{ chosen: string | null; elapsed: number }> {
+): Promise<{
+  chosen: string | null;
+  callCount: number;
+  called: string[];
+  elapsed: number;
+}> {
   const started = Date.now();
   try {
     const result = await generateText({
@@ -403,11 +408,21 @@ async function choose(
       tools,
     });
     return {
+      // Every call, not just the first. `docs/phase4-verification.md` claimed
+      // "sync and then show me what needs reviewing picked one tool, not two",
+      // which this function could not support while it discarded
+      // `toolCalls[1..]` — a chained turn would have printed OK. §3.3's whole
+      // argument for shallow tools is about chaining, so the harness has to be
+      // able to see a chain to say anything about one.
+      callCount: result.toolCalls.length,
+      called: result.toolCalls.map((c) => c.toolName),
       chosen: result.toolCalls[0]?.toolName ?? null,
       elapsed: Date.now() - started,
     };
   } catch (error) {
     return {
+      callCount: 0,
+      called: [],
       chosen: `ERROR: ${error instanceof Error ? error.message : String(error)}`,
       elapsed: Date.now() - started,
     };
@@ -424,14 +439,22 @@ async function runHard(
     // running these concurrently would only move the queue inside the server
     // and would make the per-turn latency printed below meaningless.
     // biome-ignore lint/performance/noAwaitInLoops: measuring per-turn latency against a single local model
-    const { chosen, elapsed } = await choose(model, tools, prompt);
+    const { chosen, callCount, called, elapsed } = await choose(
+      model,
+      tools,
+      prompt
+    );
     const pass = expected.includes(chosen);
+    // A chained turn is a distinct failure from a mis-picked tool, and §3.3
+    // says chaining is where an 8B compounds errors. Surfaced rather than
+    // folded into pass/fail so a claim about it can cite a measurement.
+    const chain = callCount > 1 ? `  CHAINED: ${called.join(" + ")}` : "";
     if (pass) {
       defensible += 1;
     }
     console.log(
       `${pass ? "OK  " : "MISS"}  ${String(elapsed).padStart(5)}ms  ` +
-        `${(chosen ?? "(none)").padEnd(22)} ${prompt}`
+        `${(chosen ?? "(none)").padEnd(22)} ${prompt}${chain}`
     );
     if (!pass) {
       console.log(
@@ -465,19 +488,24 @@ async function main() {
     calls.length = 0;
     // Sequential for the same reason as `runHard` above.
     // biome-ignore lint/performance/noAwaitInLoops: measuring per-turn latency against a single local model
-    const { chosen, elapsed } = await choose(model, tools, prompt);
+    const { chosen, callCount, called, elapsed } = await choose(
+      model,
+      tools,
+      prompt
+    );
+    const chain = callCount > 1 ? `  CHAINED: ${called.join(" + ")}` : "";
 
     const pass = chosen === expected;
     if (pass) {
       correct += 1;
     } else {
       wrong.push(
-        `  ${JSON.stringify(prompt)}\n    expected ${expected ?? "(no tool)"}, got ${chosen ?? "(no tool)"}`
+        `  ${JSON.stringify(prompt)}\n    expected ${expected ?? "(no tool)"}, got ${chosen ?? "(no tool)"}${chain}`
       );
     }
     console.log(
       `${pass ? "PASS" : "FAIL"}  ${String(elapsed).padStart(5)}ms  ` +
-        `${(chosen ?? "(none)").padEnd(22)} ${prompt}`
+        `${(chosen ?? "(none)").padEnd(22)} ${prompt}${chain}`
     );
   }
 

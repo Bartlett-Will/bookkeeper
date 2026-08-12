@@ -223,9 +223,36 @@ The two results that bear most directly on the design:
   This is the pre-routing false positive that §5.3 rule 4's interrogative veto
   exists to prevent, and the model declines it independently of the
   deterministic matcher. Defence in depth, confirmed rather than assumed.
-- **`"sync and then show me what needs reviewing"` picked one tool, not two.**
-  Chaining pressure is the §3.3 failure mode that `MAX_STEPS_PER_TURN = 2`
-  caps; the model did not attempt the chain in the first place.
+- **`"sync and then show me what needs reviewing"` does attempt the chain —
+  this claim was wrong, and the harness could not have known.** It originally
+  read "picked one tool, not two… the model did not attempt the chain in the
+  first place". `measure-tool-selection.ts` recorded only `toolCalls[0]` and
+  discarded the rest, so a chained turn printed `OK` and the claim was an
+  inference from an instrument that could not see chaining at all. Corrected
+  2026-08-12 by making the harness record every call. Measured:
+
+  | prompt | tools actually called |
+  |---|---|
+  | `sync and then show me what needs reviewing` | `sync_accounts` + `get_review_queue` |
+  | `show me everything` | `get_envelope_status` + `get_review_queue` + `get_spending_report` |
+  | `compare June and July for me` | `get_spending_report` ×2 |
+  | `summarise how 2026 went` | `get_month_end_report` **×7** |
+
+  Two things follow, and the second is the one that matters.
+
+  **`MAX_STEPS_PER_TURN = 2` does not bound this.** It caps *steps*; these are
+  parallel tool calls inside a single step. The `×7` is §3.3's invocation loop
+  observed live — the same tool re-invoked seven times on one turn — and the
+  step cap is structurally unable to stop it.
+
+  **The write tool never appeared in any chain.** Across all fifteen
+  adversarial prompts, every chained call was read-only. That is the property
+  that keeps this from being serious: seven redundant reads cost 13.9 s and
+  nothing else, where seven `allocate_to_envelope` calls would be seven
+  duplicate ledger entries. But it is *evidence from fifteen prompts, not a
+  guarantee* — the mechanism does not enforce it, the model's behaviour does.
+  Bounding calls-per-step, or excluding the write tool from parallel calls,
+  is the open follow-up.
 
 One result worth flagging rather than banking, because it concerns the only
 tool that writes: **`"I want groceries to be 400 a month"` invoked
