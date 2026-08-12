@@ -527,9 +527,38 @@ def test_more_candidates_than_fit_are_capped_and_the_remainder_is_counted():
 
     assert len(result.findings) == MAX_CANDIDATES
     assert any(
-        f"2 further {KIND_AMOUNT_MATCH} finding(s) not shown" in note
+        f"2 further {KIND_AMOUNT_MATCH} candidate(s) not shown" in note
         for note in result.notes
     ), result.notes
+
+
+def test_confirmed_findings_are_never_capped_out_of_the_arithmetic():
+    """The cap is a display concern; `explained` is a claim about money.
+
+    The test above cannot catch this: its eight findings are unconfirmed
+    candidates whose deltas never enter `explained`, so capping them is
+    arithmetically free. Confirmed findings are different in kind — they are
+    what `explained` is summed over, so trimming the seventh does not hide it,
+    it removes it from the total.
+
+    Before the fix this reported `explained` of -60.00 against a delta of
+    -80.00, and the residual then told the reader the remaining -20.00 "starts
+    before the period, or the closing balance itself is wrong". Both false:
+    every penny was accounted for by findings the cap had dropped. It is the
+    same shape as the double-count this module was already fixed for once, and
+    it fires on an ordinary sync gap, where missing lines come in tens.
+    """
+    # Nothing in the ledger for January; the statement lists eight charges.
+    entries, options = _load("")
+    rows = "".join(f"2026-01-{day:02d},CHARGE {day},-10.00\n" for day in range(2, 10))
+    statement = csv_statement(rows, str(OPENING - Decimal("80.00")))
+    result = reconcile_entries(entries, statement, options=options)
+
+    confirmed = [f for f in result.findings if f.confirmed]
+    assert len(confirmed) == 8, "a confirmed finding was capped out of the result"
+    assert result.explained == result.delta
+    assert result.residual == Decimal("0.00")
+    assert not any("starts before" in note for note in result.notes), result.notes
 
 
 # =========================================================================

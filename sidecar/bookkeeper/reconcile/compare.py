@@ -959,17 +959,32 @@ def _hypotheses(
 
 
 def _cap(findings: list[Finding], notes: list[str]) -> list[Finding]:
-    """Trim each kind to `MAX_CANDIDATES`, saying what was withheld.
+    """Trim *unconfirmed* findings to `MAX_CANDIDATES` per kind.
 
     The rendered output is read by someone hunting one transaction. Forty
     same-amount rows is a dump, and a dump is where a real finding goes to
     hide -- but silently dropping evidence is worse, so the count survives as
     a note.
+
+    **Confirmed findings are never capped, and that is a correctness
+    requirement rather than a presentation preference.** `explained` is summed
+    over the confirmed findings in the returned list, so trimming one does not
+    hide it -- it removes it from the arithmetic. A sync gap leaving eight
+    missing charges of 10.00 reported `explained` of 60.00 against a delta of
+    80.00, and the 20.00 residual then told the user the rest "starts before
+    the period, or the closing balance itself is wrong". Both false: the
+    module had accounted for all of it and then sent them somewhere else to
+    look. That is the same failure this module was already fixed for once, so
+    the cap now applies only to hypotheses, which carry a zero delta and
+    genuinely are a browsable list.
     """
     kept: list[Finding] = []
     seen: dict[str, int] = {}
     withheld: dict[str, int] = {}
     for finding in findings:
+        if finding.confirmed:
+            kept.append(finding)
+            continue
         seen[finding.kind] = seen.get(finding.kind, 0) + 1
         if seen[finding.kind] <= MAX_CANDIDATES:
             kept.append(finding)
@@ -977,7 +992,7 @@ def _cap(findings: list[Finding], notes: list[str]) -> list[Finding]:
             withheld[finding.kind] = withheld.get(finding.kind, 0) + 1
     for kind, count in sorted(withheld.items()):
         notes.append(
-            f"{count} further {kind} finding(s) not shown (showing the first "
+            f"{count} further {kind} candidate(s) not shown (showing the first "
             f"{MAX_CANDIDATES}); narrow the period to see them"
         )
     return kept
