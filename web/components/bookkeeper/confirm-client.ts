@@ -32,11 +32,11 @@ export const CONFIRM_ENDPOINT = "/api/bookkeeper/review/confirm";
  * `{accounts: string[]}` — the open expense and income accounts, and the only
  * set a correction may target.
  *
- * Note this proxy does not exist in `app/api/bookkeeper/` yet: the sidecar
- * endpoint is live but nothing forwards to it, so this currently 404s. That is
- * deliberate rather than overlooked — adding it needs a `lib/sidecar/client.ts`
- * function, which is another worker's file. `ReviewCard` degrades to
- * accept-only when this fails, so the queue stays usable in the meantime.
+ * `ReviewCard` degrades to accept-only if this fails, so the queue stays
+ * usable when the sidecar is down — but the correction control needs the
+ * list, because `POST /review/confirm` rejects the whole batch if any account
+ * is not open in the ledger. Pre-validating here is what stops one bad
+ * account costing a user their other thirty-nine approvals.
  */
 export const ACCOUNTS_ENDPOINT = "/api/bookkeeper/accounts/categorizable";
 

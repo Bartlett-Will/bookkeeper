@@ -71,7 +71,14 @@ def fetch_accounts(
 
     raw_dir = paths.raw_dir()
     raw_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Microseconds, not seconds. Two fetches inside one wall-clock second used
+    # to land on the same filename and silently overwrite each other, which
+    # costs twice: a backfill window's raw evidence disappears, and
+    # `backfill.requests_used_today` counts these files to police the ~24/day
+    # limit, so it under-counted and could let a run start believing it had
+    # more budget than it did. Sub-second spacing is implausible against the
+    # live bridge and entirely ordinary against `scripts/simplefin_replay.py`.
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     archive_path = raw_dir / f"simplefin-{ts}.json"
     # Verbatim bytes, archived before any parsing is attempted.
     archive_path.write_bytes(response.content)
