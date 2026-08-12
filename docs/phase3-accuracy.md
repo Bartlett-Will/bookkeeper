@@ -71,11 +71,22 @@ ones it happened to reach inside the cascade.
 | tier | coverage | precision | top-1 acc | answered | correct |
 |---|---|---|---|---|---|
 | memory | 63.3% | 100.0% | 63.3% | 38 | 38 |
-| rule | 1.7% | 100.0% | 1.7% | 1 | 1 |
+| rule | 0.0% | — | 0.0% | 0 | 0 |
 | mcc | 41.7% | 100.0% | 41.7% | 25 | 25 |
 | statistical | 86.7% | 96.2% | 83.3% | 52 | 50 |
 | **cascade (no LLM)** | **93.3%** | **96.4%** | **90.0%** | 56 | 54 |
 | majority baseline | 100% | 28.3% | 28.3% | 60 | 17 |
+
+**The rule tier answers nothing, and that is the honest figure.** It read
+`data/rules.yaml` off disk, so an earlier run of this table reported 1.7%
+coverage — one hit, from the developer's own rules file, which has no
+relationship to a synthetic corpus. The corpus has its own ten-account label
+set; a rule naming an account open in the *real* ledger but absent from the
+corpus raised `RuleError` and turned the gate red with a message that read as
+a ledger fault. The tier is now pointed at an empty rules file for the
+duration of the eval, the same isolation the memory tier already had, so this
+row measures the corpus rather than one machine's configuration. A regression
+bound has to mean the same thing on two machines.
 
 `coverage` is the share of held-out transactions the tier answered at all;
 `precision` is correct-over-answered. They are reported separately and never

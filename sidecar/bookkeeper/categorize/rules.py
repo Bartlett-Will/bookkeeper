@@ -107,14 +107,35 @@ class RuleCategorizer:
     def __init__(self, path: Path | None = None) -> None:
         self._path = path if path is not None else rules_path()
         self._rules = _load_rules(self._path)
+        self._validated_against: tuple[str, ...] | None = None
 
-    def predict(self, txn: CategorizationInput, ctx: LedgerContext) -> Prediction | None:
+    def _validate(self, ctx: LedgerContext) -> None:
+        """Check every rule's account, once per account set.
+
+        Deliberately not inside the match loop. It used to be, with an early
+        return on the first match, so whether a bad rule was noticed depended
+        on which transaction arrived and on where the bad rule sat in the
+        file: a rule listed after the one that matched was never checked at
+        all. The same `rules.yaml` therefore raised for some transactions and
+        not others, which is the worst shape a config error can take -- it
+        looks like a data problem rather than a configuration one.
+
+        Checking the whole set before matching makes the outcome a property of
+        the file and the ledger, not of the input.
+        """
+        if self._validated_against == ctx.accounts:
+            return
         for rule in self._rules:
             if rule.account not in ctx.accounts:
                 raise RuleError(
                     f'rule "{rule.name}" targets account "{rule.account}", which is '
                     "not open in the ledger -- fix rules.yaml or open the account"
                 )
+        self._validated_against = ctx.accounts
+
+    def predict(self, txn: CategorizationInput, ctx: LedgerContext) -> Prediction | None:
+        self._validate(ctx)
+        for rule in self._rules:
             if _matches(rule, txn):
                 return Prediction(
                     account=rule.account,

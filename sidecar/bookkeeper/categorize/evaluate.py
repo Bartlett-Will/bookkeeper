@@ -256,8 +256,38 @@ class _DefaultTierFactory:
         self.unavailable = tuple(getattr(cascade, "unavailable", ()))
         if self._memory_dir is None:
             return tiers
+
+        # The rule tier reads `data/rules.yaml` off disk, exactly as the memory
+        # tier reads `data/memory.json` -- so the same argument applies and was
+        # only half-applied. The corpus has its own ten-account label set, and a
+        # rule naming an account that is open in the *real* ledger but not in
+        # the corpus raises `RuleError`, turning "Accuracy regression gate"
+        # red with a message that reads as a ledger problem when it is a
+        # mismatch between two unrelated account sets. Adding a rule is the
+        # documented purpose of that file, and `suggest-rules` exists to
+        # produce them, so this fires the first time anyone acts on its output.
+        #
+        # Pointed at an empty file rather than the real one: the gate measures
+        # the cascade against a fixed corpus, and a tier reading mutable local
+        # state cannot be part of a regression bound that is supposed to mean
+        # the same thing on two machines.
+        empty_rules = self._memory_dir / "rules-for-eval.yaml"
+        if not empty_rules.exists():
+            empty_rules.write_text("[]\n", encoding="utf-8")
+
+        from bookkeeper.categorize.rules import RuleCategorizer
+
         seeded = seed_memory_from_context(ctx, self._memory_dir)
-        return tuple(seeded if t.tier is Tier.MEMORY else t for t in tiers)
+        isolated_rules = RuleCategorizer(path=empty_rules)
+        swapped: list[Categorizer] = []
+        for tier in tiers:
+            if tier.tier is Tier.MEMORY:
+                swapped.append(seeded)
+            elif tier.tier is Tier.RULE:
+                swapped.append(isolated_rules)
+            else:
+                swapped.append(tier)
+        return tuple(swapped)
 
 
 def build_examples(
